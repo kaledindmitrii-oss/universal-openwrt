@@ -64,5 +64,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ''
-Write-Host 'SUCCESS: Universal OpenWrt v30.0.0 was pushed to GitHub.'
+Write-Host 'SUCCESS: Universal OpenWrt v30.1.0 was pushed to GitHub.'
 exit 0
