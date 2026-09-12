@@ -29,6 +29,11 @@ const resourceUpdate=rpc.declare({object:'universal_openwrt',method:'resource_up
 const tgProxyStatus=rpc.declare({object:'universal_openwrt',method:'tg_proxy_status',params:[]});
 const tgProxyEnable=rpc.declare({object:'universal_openwrt',method:'tg_proxy_enable',params:['confirm']});
 const tgProxyDisable=rpc.declare({object:'universal_openwrt',method:'tg_proxy_disable',params:['confirm']});
+const resourcePolicy=rpcResourcePolicy;
+const resourceRefresh=resourceUpdate;
+const tgStatus=tgProxyStatus;
+const tgEnable=tgProxyEnable;
+const tgDisable=tgProxyDisable;
 function out(title,text){return E('div',{'class':'cbi-section'},[E('h3',{},title),E('pre',{'style':'white-space:pre-wrap;max-height:420px;overflow:auto'},text||'—')]);}
 function modal(title,text){ui.showModal(title,[E('pre',{'style':'white-space:pre-wrap;max-height:70vh;overflow:auto'},text||'—'),E('button',{'class':'btn cbi-button','click':ui.hideModal},'Закрыть')]);}
 return view.extend({load:()=>Promise.all([status(),matrix(),logs(),awgStatus()]),render:function(d){
@@ -52,14 +57,14 @@ return view.extend({load:()=>Promise.all([status(),matrix(),logs(),awgStatus()])
    function create(){if(!/^[A-Za-z0-9._-]{1,48}$/.test(name.value))return ui.addNotification(null,E('p',{},'Имя профиля: латиница, цифры, . _ -'),'error');return vpnProfileCreate(name.value,mode.value,iface.value||'awg10','AWG/WARP profile').then(r=>{modal('Профиль',r?.output||r?.error||'');return refreshProfiles();});}
    function selected(){let n=prompt('Имя профиля');return n&&/^[A-Za-z0-9._-]{1,48}$/.test(n)?n:null;}
    function activate(){let n=selected();if(!n)return;return vpnProfileActivate(n,true).then(r=>{modal('Активация профиля',r?.output||r?.error||'');return refreshProfiles();});}
-   function test(){let n=selected();if(!n)return;return vpnProfileTest(n).then(r=>modal('Тест профиля',r?.output||r?.error||''));}
+   function testProfile(){let n=selected();if(!n)return;return vpnProfileTest(n).then(r=>modal('Тест профиля',r?.output||r?.error||''));}
    function bench(){return vpnProfileBenchmark('').then(r=>modal('Сравнение VPN-профилей',r?.output||r?.error||''));}
    function autoPick(){if(!confirm('Сравнить сохранённые VPN-профили и автоматически включить лучший?'))return;return vpnProfileAuto(true).then(r=>{modal('Автовыбор VPN',r?.output||r?.error||'');return refreshProfiles();});}
    function adaptive(){if(!confirm('Запустить полный адаптивный подбор: Core → DPI → AWG Split/Full → Podkop → Proxy? Это может временно переключать маршрутизацию.'))return;return adaptiveAuto(true).then(r=>modal('Адаптивный контроллер',r?.output||r?.error||''));}
    function adaptiveState(){return adaptiveStatus().then(r=>modal('Состояние адаптивного контроллера',r?.output||r?.error||''));}
    function predictive(){if(!confirm('Запустить предиктивный анализ проблемных ресурсов и автоматическое восстановление?'))return;return predictiveAuto(true).then(r=>modal('Предиктивный контроллер',r?.output||r?.error||''));}
    function predictiveState(){return predictiveStatus().then(r=>modal('История предиктивного контроллера',r?.output||r?.error||''));}
-   root.appendChild(E('div',{'class':'cbi-section'},[E('h3',{},'VPN-профили AWG/WARP'),E('div',{'style':'display:flex;gap:8px;flex-wrap:wrap;align-items:center'},[name,mode,iface,btn('Создать профиль',create),btn('Активировать',activate),btn('Тест профиля',test),btn('Сравнить все',bench),btn('Автовыбор лучшего',autoPick,'cbi-button-positive'),btn('Адаптивный подбор стратегий',adaptive,'cbi-button-positive'),btn('Состояние стратегий',adaptiveState),btn('Предиктивный анализ',predictive,'cbi-button-positive'),btn('История предиктива',predictiveState),btn('Матрица ресурсов',resourcePolicy),btn('Обновить список ресурсов',resourceRefresh),btn('Telegram SOCKS5',tgStatus),btn('Включить Telegram proxy',tgEnable,'cbi-button-positive'),btn('Отключить Telegram proxy',tgDisable,'cbi-button-negative')]),box]));
+   root.appendChild(E('div',{'class':'cbi-section'},[E('h3',{},'VPN-профили AWG/WARP'),E('div',{'style':'display:flex;gap:8px;flex-wrap:wrap;align-items:center'},[name,mode,iface,btn('Создать профиль',create),btn('Активировать',activate),btn('Тест профиля',testProfile),btn('Сравнить все',bench),btn('Автовыбор лучшего',autoPick,'cbi-button-positive'),btn('Адаптивный подбор стратегий',adaptive,'cbi-button-positive'),btn('Состояние стратегий',adaptiveState),btn('Предиктивный анализ',predictive,'cbi-button-positive'),btn('История предиктива',predictiveState),btn('Матрица ресурсов',resourcePolicy),btn('Обновить список ресурсов',resourceRefresh),btn('Telegram SOCKS5',tgStatus),btn('Включить Telegram proxy',tgEnable,'cbi-button-positive'),btn('Отключить Telegram proxy',tgDisable,'cbi-button-negative')]),box]));
    refreshProfiles();
  }
  renderProfiles();

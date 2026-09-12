@@ -11,6 +11,9 @@ jobs:
         run: |
           set -e
           find . -type f \( -name '*.sh' -o -name 'universal-openwrt' \) -print0 | xargs -0 -n1 sh -n
+      - name: LuCI JavaScript syntax
+        run: |
+          if command -v node >/dev/null 2>&1; then node --check luci-app-universal-openwrt/htdocs/luci-static/resources/view/universal-openwrt/overview.js; else echo 'node unavailable; JS syntax check skipped'; fi
       - name: Basic structure
         run: |
           test -x src/universal-openwrt
@@ -19,4 +22,4 @@ jobs:
           test -f VERSION
       - name: Secret scan
         run: |
-          ! grep -RInE '(PRIVATE_KEY|PASSWORD|TOKEN|SECRET)=.{8,}' src installer luci-app-universal-openwrt --exclude='*.md' || true
+          if grep -RInE '(PRIVATE_KEY|PASSWORD|TOKEN|SECRET)=.{8,}' src installer luci-app-universal-openwrt --exclude='*.md'; then echo 'Potential secret detected'; exit 1; fi

@@ -74,3 +74,15 @@ The project uses public strategy/resource research from `itdoginfo/allow-domains
 ## License
 
 See [LICENSE](LICENSE).
+
+
+## v30.1.0 — audit hardening
+
+- Fixed LuCI/RPC method mismatches (`benchmark`, `test`, device profile and status methods).
+- Fixed LuCI dashboard callbacks that referenced undefined functions and the connection-test name collision.
+- Aligned rpcd ACL read/write permissions with the actual API surface.
+- Fixed resource discovery accidentally discarding the generated resource matrix.
+- Hardened Telegram SOCKS5 JSON generation and LAN-interface selection.
+- Self-update now requires SHA-256 verification before replacing the runtime.
+- CI now fails on the configured secret-pattern scan and validates LuCI JavaScript syntax when Node.js is available.
+- Verified shell syntax and smoke tests locally.

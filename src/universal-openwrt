@@ -6,7 +6,7 @@
 # Does not blindly install kernel modules or overwrite unknown UCI sections.
 
 set -u
-VERSION='30.0.0'
+VERSION='30.1.0'
 BASE='/tmp/universal-openwrt'
 BACKUP_BASE='/root/universal-openwrt-backups'
 LOG='/root/universal-openwrt.log'
@@ -181,8 +181,9 @@ discover_candidates(){
   if command -v resource_matrix_build_candidate >/dev/null 2>&1; then resource_matrix_build_candidate "$SPEED"; [ -s "$RESOURCE_DIR/active.lst" ] && cp -f "$RESOURCE_DIR/active.lst" "$OUT"; fi
   CACHE="$BASE/ooni-testlist.json"
   META="$BASE/ooni-cache.ts"
-  : > "$OUT"
-  for d in $SEED_DOMAINS; do printf '%s\n' "$d" >> "$OUT"; done
+  if [ ! -s "$OUT" ]; then
+    for d in $SEED_DOMAINS; do printf '%s\n' "$d" >> "$OUT"; done
+  fi
   OONI_SOURCE=0; USE_CACHE=0
   # Quick mode intentionally avoids OONI/network discovery overhead.
   if [ "$SPEED" != quick ]; then
@@ -1162,18 +1163,24 @@ EOL
 tg_proxy_load(){ tg_proxy_init; host=''; port=''; username=''; password=''; enabled=0; . "$TG_PROXY_CONF" 2>/dev/null || true; TG_HOST="$host"; TG_PORT="$port"; TG_USER="$username"; TG_PASS="$password"; TG_ENABLED="$enabled"; }
 tg_proxy_configured(){ tg_proxy_load; [ "$TG_ENABLED" = 1 ] && [ -n "$TG_HOST" ] && [ -n "$TG_PORT" ]; }
 tg_proxy_capability(){ tg_proxy_configured || return 1; have nft || return 1; have ip || return 1; have sing-box || { module_preflight proxy >/dev/null 2>&1 || return 1; }; have sing-box; }
+json_escape(){ printf '%s' "$1" | sed 's/\\/\\\\/g;s/"/\\"/g;s/[[:space:]]/ /g'; }
+nft_escape(){ printf '%s' "$1" | sed 's/\\/\\\\/g;s/"/\\"/g'; }
 tg_proxy_apply(){
   tg_proxy_capability || { log 'Telegram SOCKS5 is not configured or sing-box/nft/ip is unavailable'; return 2; }
-  tg_proxy_load; mkdir -p /etc/sing-box /tmp/dnsmasq.d 2>/dev/null || return 1
+  tg_proxy_load; case "$TG_PORT" in ''|*[!0-9]*|0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9][0-9][0-9]*) log 'Invalid Telegram SOCKS5 port'; return 1;; esac
+  TG_HOST_JSON="$(json_escape "$TG_HOST")"; TG_USER_JSON="$(json_escape "$TG_USER")"; TG_PASS_JSON="$(json_escape "$TG_PASS")"
+  mkdir -p /etc/sing-box /tmp/dnsmasq.d 2>/dev/null || return 1
   cat >"$TG_PROXY_JSON" <<EOL
-{"log":{"level":"warn"},"inbounds":[{"type":"tproxy","tag":"tg-tproxy","listen":"0.0.0.0","listen_port":1101,"network":"tcp,udp","sniff":true,"sniff_override_destination":false}],"outbounds":[{"type":"socks","tag":"tg-socks5","server":"$TG_HOST","server_port":$TG_PORT$( [ -n "$TG_USER" ] && printf ',"username":"%s"' "$TG_USER" )$( [ -n "$TG_PASS" ] && printf ',"password":"%s"' "$TG_PASS" )},{"type":"direct","tag":"direct"}],"route":{"auto_detect_interface":true,"rules":[{"domain_suffix":["telegram.org","t.me","telegra.ph","telegram.me"],"outbound":"tg-socks5"},{"ip_is_private":true,"outbound":"direct"}],"final":"direct"}}
+{"log":{"level":"warn"},"inbounds":[{"type":"tproxy","tag":"tg-tproxy","listen":"0.0.0.0","listen_port":1101,"network":"tcp,udp","sniff":true,"sniff_override_destination":false}],"outbounds":[{"type":"socks","tag":"tg-socks5","server":"$TG_HOST_JSON","server_port":$TG_PORT$( [ -n "$TG_USER" ] && printf ',"username":"%s"' "$TG_USER_JSON" )$( [ -n "$TG_PASS" ] && printf ',"password":"%s"' "$TG_PASS_JSON" )},{"type":"direct","tag":"direct"}],"route":{"auto_detect_interface":true,"rules":[{"domain_suffix":["telegram.org","t.me","telegra.ph","telegram.me"],"outbound":"tg-socks5"},{"ip_is_private":true,"outbound":"direct"}],"final":"direct"}}
 EOL
   sing-box check -c "$TG_PROXY_JSON" >/dev/null 2>&1 || { log 'sing-box Telegram config check failed'; return 1; }
   nft delete table inet universal_tg_proxy 2>/dev/null || true
-  cat >"$BASE/tg.nft" <<'EOL'
+  LAN_NFT="$(nft_escape "${LAN_DEV:-br-lan}")"
+  case "$LAN_NFT" in ''|*[!A-Za-z0-9_.:-]*) LAN_NFT='br-lan';; esac
+  cat >"$BASE/tg.nft" <<EOL
 table inet universal_tg_proxy {
  set tg4 { type ipv4_addr; flags interval; }
- chain prerouting { type filter hook prerouting priority mangle; policy accept; iifname "br-lan" ip daddr @tg4 meta l4proto tcp tproxy to :1101 meta mark set 0x100; iifname "br-lan" ip daddr @tg4 meta l4proto udp tproxy to :1101 meta mark set 0x100; }
+ chain prerouting { type filter hook prerouting priority mangle; policy accept; iifname "$LAN_NFT" ip daddr @tg4 meta l4proto tcp tproxy to :1101 meta mark set 0x100; iifname "$LAN_NFT" ip daddr @tg4 meta l4proto udp tproxy to :1101 meta mark set 0x100; }
 }
 EOL
   nft -f "$BASE/tg.nft" >/dev/null 2>&1 || return 1
@@ -1784,7 +1791,7 @@ Universal OpenWrt v$VERSION
   --device-profile IP PROFILE  force a client profile (ios/android/windows/tv/gaming/generic)
   --version          show installed version
   --self-check       run lightweight local dependency/integrity checks
-  --self-update URL  replace this script from a trusted URL
+  --self-update URL SHA256  replace this script after SHA256 verification
   --predictive-status   show predictive controller state/history
   --speed MODE quick|standard|deep|auto
   -y             non-interactive
@@ -1848,7 +1855,7 @@ VPN_PROFILE_MODE="";;
     --device-profile) MODE=device_profile; DEVICE_IP="${2:-}"; DEVICE_PROF="${3:-}"; shift 2;;
     --version) printf '%s\n' "Universal OpenWrt v$VERSION"; exit 0;;
     --self-check) MODE=self_check;;
-    --self-update) SELF_UPDATE_URL="${2:-}"; [ -n "$SELF_UPDATE_URL" ] || die 'URL required for --self-update'; shift;;
+    --self-update) SELF_UPDATE_URL="${2:-}"; SELF_UPDATE_SHA256="${3:-}"; [ -n "$SELF_UPDATE_URL" ] || die 'URL required for --self-update'; [ -n "$SELF_UPDATE_SHA256" ] || die 'SHA256 required for --self-update'; shift 2;;
     --predictive-status) MODE=predictive_status;;
     -y) ASSUME_YES=1;;
     -h|--help) usage; exit 0;;
@@ -1863,6 +1870,8 @@ if [ -n "${SELF_UPDATE_URL:-}" ]; then
   TMP_UPDATE="/tmp/universal-openwrt-update.$$"
   if have uclient-fetch; then uclient-fetch -q -O "$TMP_UPDATE" "$SELF_UPDATE_URL"; elif have wget; then wget -q -O "$TMP_UPDATE" "$SELF_UPDATE_URL"; elif have curl; then curl -fsSL -o "$TMP_UPDATE" "$SELF_UPDATE_URL"; else die "No downloader available"; fi
   [ -s "$TMP_UPDATE" ] || die "Downloaded update is empty"
+  have sha256sum || die "sha256sum required for --self-update"
+  printf '%s  %s\n' "$SELF_UPDATE_SHA256" "$TMP_UPDATE" | sha256sum -c - >/dev/null 2>&1 || die "SHA256 verification failed"
   chmod 0755 "$TMP_UPDATE"
   sh -n "$TMP_UPDATE" || die "Downloaded update failed shell syntax check"
   install -m 0755 "$TMP_UPDATE" "$0.new" 2>/dev/null || cp "$TMP_UPDATE" "$0.new"
