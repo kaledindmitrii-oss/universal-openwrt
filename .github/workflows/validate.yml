@@ -1,0 +1,22 @@
+name: Validate
+on:
+  push:
+  pull_request:
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          set -e
+          find . -type f \( -name '*.sh' -o -name 'universal-openwrt' \) -print0 | xargs -0 -n1 sh -n
+      - name: Basic structure
+        run: |
+          test -x src/universal-openwrt
+          test -x installer/install.sh
+          test -f luci-app-universal-openwrt/Makefile
+          test -f VERSION
+      - name: Secret scan
+        run: |
+          ! grep -RInE '(PRIVATE_KEY|PASSWORD|TOKEN|SECRET)=.{8,}' src installer luci-app-universal-openwrt --exclude='*.md' || true

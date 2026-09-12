@@ -1,0 +1,25 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package
+        run: |
+          VERSION="$(cat VERSION)"
+          mkdir -p dist/universal-openwrt-v${VERSION}
+          cp -R src installer luci-app-universal-openwrt packaging resources docs .github README.md LICENSE VERSION dist/universal-openwrt-v${VERSION}/
+          tar -C dist -czf "dist/universal-openwrt-v${VERSION}.tar.gz" "universal-openwrt-v${VERSION}"
+          (cd dist && sha256sum "universal-openwrt-v${VERSION}.tar.gz" > SHA256SUMS)
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true

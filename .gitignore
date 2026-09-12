@@ -1,0 +1,15 @@
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+.env
+.env.*
+secrets/
+private/
+*.key
+*.pem
+*.token
+runtime/
+state/
+/etc/

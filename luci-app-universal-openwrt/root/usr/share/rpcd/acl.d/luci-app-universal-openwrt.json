@@ -1,0 +1,49 @@
+{
+  "luci-app-universal-openwrt": {
+    "description": "Universal OpenWrt manager",
+    "read": {
+      "ubus": {
+        "universal_openwrt": [
+          "status",
+          "matrix",
+          "verify",
+          "discover",
+          "logs",
+          "optimize",
+          "benchmark",
+          "awg_status",
+          "vpn_profiles",
+          "test",
+          "vpn_monitor_status",
+          "vpn_monitor_run",
+          "adaptive_status",
+          "predictive_status",
+          "resource_policy",
+          "resource_update",
+          "tg_proxy_status"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "universal_openwrt": [
+          "install",
+          "rollback",
+          "test",
+          "vpn_profile_create",
+          "vpn_profile_delete",
+          "vpn_profile_activate",
+          "vpn_profile_test",
+          "vpn_profile_benchmark",
+          "vpn_profile_auto",
+          "vpn_monitor_enable",
+          "vpn_monitor_disable",
+          "adaptive_auto",
+          "predictive_auto",
+          "tg_proxy_enable",
+          "tg_proxy_disable"
+        ]
+      }
+    }
+  }
+}

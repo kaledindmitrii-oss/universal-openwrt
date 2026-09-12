@@ -1,0 +1,47 @@
+'use strict';
+import { popen, system } from 'fs';
+const BIN = '/usr/sbin/universal-openwrt';
+const ALLOWED = [ 'auto', 'core', 'doh-unpoison', 'malw-hosts', 'dpi-desync', 'awg-warp', 'podkop', 'proxy', 'all' ];
+const VPNMODES = [ 'split', 'full', 'off' ];
+function quote(s) { return "'" + replace(s ?? '', /'/g, "'\\''") + "'"; }
+function exists(path) { return access(path, 'x'); }
+function run(cmd) { let p = popen(cmd + ' 2>&1'); if (!p) return {ok:false,output:'cannot start command'}; let out=p.read('all') ?? ''; p.close(); return {ok:true,output:out}; }
+function read(cmd) { if (!exists(BIN)) return {ok:false,error:'Universal OpenWrt backend is not installed'}; return run(cmd); }
+function valid_module(m) { return ALLOWED.includes(m); }
+function valid_profile(n) { return /^[A-Za-z0-9._-]{1,48}$/.test(n ?? ''); }
+return { universal_openwrt: {
+ status:{args:{},call:()=>read(BIN+' --diagnose')}, matrix:{args:{},call:()=>read(BIN+' --matrix')},
+ optimize:{args:{speed:'standard'},call:r=>{let s=r.args?.speed??'standard';if(!['quick','standard','deep','auto'].includes(s))s='standard';return read(BIN+' --optimize --speed '+quote(s));}},
+ discover:{args:{speed:'standard'},call:r=>{let s=r.args?.speed??'standard';if(!['quick','standard','deep','auto'].includes(s))s='standard';return read(BIN+' --discover --speed '+quote(s));}},
+ verify:{args:{},call:()=>read(BIN+' --verify')}, logs:{args:{},call:()=>run("tail -n 250 /root/universal-openwrt.log")},
+ awg_status:{args:{},call:()=>read(BIN+' --awg-status')},
+ vpn_profiles:{args:{},call:()=>read(BIN+' --vpn-profiles')},
+ vpn_profile_create:{args:{name:'',mode:'split',iface:'awg10',description:''},call:r=>{let a=r.args||{};if(!valid_profile(a.name)||!VPNMODES.includes(a.mode))return {ok:false,error:'Invalid profile'};return read(BIN+' --vpn-profile-create '+quote(a.name)+' '+quote(a.mode)+' '+quote(a.iface||'awg10')+' '+quote(a.description||'AWG/WARP profile'));}},
+ vpn_profile_delete:{args:{name:'',confirm:false},call:r=>{if(r.args?.confirm!==true||!valid_profile(r.args?.name))return {ok:false,error:'Confirmation or profile name required'};return read(BIN+' --vpn-profile-delete '+quote(r.args.name));}},
+ vpn_profile_activate:{args:{name:'',confirm:false},call:r=>{if(r.args?.confirm!==true||!valid_profile(r.args?.name))return {ok:false,error:'Confirmation or profile name required'};return read(BIN+' --vpn-profile-activate '+quote(r.args.name));}},
+ vpn_profile_test:{args:{name:''},call:r=>{if(!valid_profile(r.args?.name))return {ok:false,error:'Invalid profile name'};return read(BIN+' --vpn-profile-test '+quote(r.args.name));}},
+ vpn_profile_benchmark:{args:{name:''},call:r=>{let n=r.args?.name||'';if(n&&!valid_profile(n))return {ok:false,error:'Invalid profile name'};return read(BIN+' --vpn-profile-benchmark'+(n?' '+quote(n):''));}},
+ vpn_profile_auto:{args:{confirm:false},call:r=>{if(r.args?.confirm!==true)return {ok:false,error:'Confirmation required'};return read(BIN+' --vpn-profile-auto');}},
+ vpn_monitor_status:{args:{},call:()=>read(BIN+' --vpn-monitor-status')},
+ vpn_monitor_enable:{args:{confirm:false},call:r=>{if(r.args?.confirm!==true)return {ok:false,error:'Confirmation required'};return read(BIN+' --vpn-monitor-enable');}},
+ vpn_monitor_disable:{args:{confirm:false},call:r=>{if(r.args?.confirm!==true)return {ok:false,error:'Confirmation required'};return read(BIN+' --vpn-monitor-disable');}},
+ vpn_monitor_run:{args:{},call:()=>read(BIN+' --vpn-monitor-run')},
+ adaptive_auto:{args:{confirm:false},call:r=>{if(r.args?.confirm!==true)return {ok:false,error:'Confirmation required'};return read(BIN+' --adaptive-auto');}},
+ adaptive_status:{args:{},call:()=>read(BIN+' --adaptive-status')},
+ predictive_auto:{args:{confirm:false},call:r=>{if(r.args?.confirm!==true)return {ok:false,error:'Confirmation required'};return read(BIN+' --predictive-auto');}},
+ predictive_status:{args:{},call:()=>read(BIN+' --predictive-status')},
+ resource_policy:{args:{},call:()=>read(BIN+' --resource-policy')},
+ resource_update:{args:{},call:()=>read(BIN+' --resource-update')},
+ device_status:{args:{},call:()=>read(BIN+' --device-status')},
+ device_discover:{args:{},call:()=>read(BIN+' --device-discover')},
+ device_benchmark:{args:{},call:()=>read(BIN+' --device-benchmark')},
+ service_benchmark:{args:{},call:()=>read(BIN+' --service-benchmark')},
+ service_policy:{args:{},call:()=>read(BIN+' --service-policy-status')},
+ version:{args:{},call:()=>read(BIN+' --version')},
+ self_check:{args:{},call:()=>read(BIN+' --self-check')},
+ tg_proxy_status:{args:{},call:()=>read(BIN+' --tg-proxy-status')},
+ tg_proxy_enable:{args:{confirm:false},call:r=>{if(r.args?.confirm!==true)return {ok:false,error:'Confirmation required'};return read(BIN+' --tg-proxy-enable');}},
+ tg_proxy_disable:{args:{confirm:false},call:r=>{if(r.args?.confirm!==true)return {ok:false,error:'Confirmation required'};return read(BIN+' --tg-proxy-disable');}},
+ install:{args:{module:'auto',speed:'standard',vpnmode:'split',confirm:false},call:r=>{let m=r.args?.module??'auto',s=r.args?.speed??'standard',v=r.args?.vpnmode??'split';if(r.args?.confirm!==true)return {ok:false,error:'Confirmation required'};if(!valid_module(m)||!['quick','standard','deep','auto'].includes(s)||!VPNMODES.includes(v))return {ok:false,error:'Invalid parameters'};return read(BIN+' --install --module '+quote(m)+' --speed '+quote(s)+' --vpn-mode '+quote(v)+' -y');}},
+ rollback:{args:{confirm:false},call:r=>{if(r.args?.confirm!==true)return {ok:false,error:'Confirmation required'};return read(BIN+' --rollback');}}
+} };
