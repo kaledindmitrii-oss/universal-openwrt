@@ -21,16 +21,21 @@
           "adaptive_status",
           "predictive_status",
           "resource_policy",
-          "resource_strategy_status",
           "device_status",
           "device_discover",
           "device_benchmark",
           "service_benchmark",
-          "service_benchmark_status",
           "service_policy",
           "version",
           "self_check",
-          "tg_proxy_status"
+          "tg_proxy_status",
+          "strategy_plan",
+          "strategy_status",
+          "tunnel_status",
+          "tunnel_profiles",
+          "tg_ws_status",
+          "tg_socks5_status",
+          "tg_failover_status"
         ]
       }
     },
@@ -50,7 +55,18 @@
           "resource_update",
           "device_profile",
           "tg_proxy_enable",
-          "tg_proxy_disable"
+          "tg_proxy_disable",
+          "tg_ws_enable",
+          "tg_ws_disable",
+          "tg_socks5_install",
+          "tg_socks5_enable",
+          "tg_socks5_disable",
+          "tunnel_profile_create",
+          "tunnel_profile_delete",
+          "tunnel_enable",
+          "tunnel_disable",
+          "tunnel_auto",
+          "tg_failover_run"
         ]
       }
     }

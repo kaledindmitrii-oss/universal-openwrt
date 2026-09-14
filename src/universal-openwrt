@@ -1,27 +1,56 @@
 # Universal OpenWrt v30 - optimized adaptive OpenWrt manager
 #!/bin/sh
-# Universal OpenWrt v30
+# Universal OpenWrt v30.2.15
 # Capability-driven wrapper for the open-routerich backend.
 # Safe defaults: detect -> backup -> compatibility plan -> install -> health-check.
 # Does not blindly install kernel modules or overwrite unknown UCI sections.
 
 set -u
-VERSION='30.1.0'
+VERSION='30.2.16'
 BASE='/tmp/universal-openwrt'
 BACKUP_BASE='/root/universal-openwrt-backups'
 LOG='/root/universal-openwrt.log'
-BACKEND_URL='https://github.com/Sigmachan/open-routerich/archive/refs/heads/main.tar.gz'
+BACKEND_URL="${UOW_BACKEND_URL:-}"
+BACKEND_SHA256="${UOW_BACKEND_SHA256:-}"
 MODE='plan'
 DRY=0
 ASSUME_YES=0
 PROFILE='auto'
 MODULE='auto'
+TUNNEL_NAME=''
+TUNNEL_ADDRESS=''
+TUNNEL_PORT='443'
+TUNNEL_UUID=''
+TUNNEL_SERVERNAME=''
 SPEED='standard'
 VPN_MODE='split'
 RESOURCE_CACHE_TTL=600
 
 mkdir -p "$BASE" 2>/dev/null || true
+UOWRT_LIB='/usr/lib/universal-openwrt'
+SCRIPT_LIB_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../modules" 2>/dev/null && pwd || true)"
+for _uowrt_lib in "$SCRIPT_LIB_DIR/strategy-engine.sh" "$SCRIPT_LIB_DIR/tunnel-engine.sh"; do
+  [ -f "$_uowrt_lib" ] && . "$_uowrt_lib"
+done
+if [ ! -f "$SCRIPT_LIB_DIR/strategy-engine.sh" ]; then
+  [ -f "$UOWRT_LIB/strategy-engine.sh" ] && . "$UOWRT_LIB/strategy-engine.sh"
+fi
+if [ ! -f "$SCRIPT_LIB_DIR/tunnel-engine.sh" ]; then
+  [ -f "$UOWRT_LIB/tunnel-engine.sh" ] && . "$UOWRT_LIB/tunnel-engine.sh"
+fi
 touch "$LOG" 2>/dev/null || LOG="$BASE/run.log"
+
+modules_self_check(){
+  modules_self_check || return 1
+  local missing=0 f
+  for f in strategy-engine.sh tunnel-engine.sh tg-ws-proxy.sh; do
+    if [ ! -f "$UOWRT_LIB/$f" ] && [ ! -f "$SCRIPT_LIB_DIR/$f" ]; then
+      log "ERROR: runtime module missing: $f"
+      missing=1
+    fi
+  done
+  return "$missing"
+}
 
 # Keep /tmp footprint bounded; preserve cached OONI data and latest reports.
 cleanup_tmp(){
@@ -55,9 +84,24 @@ detect(){
   ARCH="${ARCH:-${DISTRIB_ARCH:-$(uname -m 2>/dev/null || echo unknown)}}"
   KERNEL="$(uname -r 2>/dev/null || echo unknown)"
   if have apk; then PM=apk; elif have opkg; then PM=opkg; else PM=none; fi
-  if have fw4; then FW=fw4; elif have fw3; then FW=fw3; elif have nft; then FW=nft; elif have iptables; then FW=iptables; else FW=unknown; fi
+  if have fw4; then FW=fw4; elif have nft; then FW=nft; else FW=unknown; fi
   if have nft; then NFT=1; else NFT=0; fi
-  if have iptables; then IPT=1; else IPT=0; fi
+  IPT=0
+  EXPECTED_PM=unsupported
+  case "$VERSION_OW" in
+    24.10.*)
+      _p="${VERSION_OW#24.10.}"
+      case "$_p" in ''|*[!0-9]*) : ;; *)
+        _p="$(printf '%s' "$_p" | sed 's/^0*//')"; _p="${_p:-0}"
+        [ "$_p" -ge 2 ] 2>/dev/null && EXPECTED_PM=opkg
+      ;; esac
+      ;;
+    25.12.*)
+      _p="${VERSION_OW#25.12.}"
+      case "$_p" in ''|*[!0-9]*) : ;; *) EXPECTED_PM=apk;; esac
+      ;;
+  esac
+  if [ "$EXPECTED_PM" != unsupported ] && [ "$PM" = "$EXPECTED_PM" ] && [ "$FW" = fw4 ]; then SUPPORTED=1; else SUPPORTED=0; fi
   if have wg; then WG=1; else WG=0; fi
   if lsmod 2>/dev/null | grep -q '^amneziawg'; then AWG=1; else AWG=0; fi
   LAN_DEV="$(get_uci network.lan.device)"; LAN_DEV="${LAN_DEV:-$(get_uci network.lan.ifname)}"
@@ -82,9 +126,13 @@ show(){
   log "Firewall=$FW"
   log "LAN=${LAN_DEV:-unknown} WAN=${WAN_DEV:-unknown} DEFAULT_IF=${DEFAULT_IF:-unknown}"
   log "dnsmasq=${DNSMASQ:-unknown}"
-  log "WireGuard=$WG AmneziaWG=$AWG nft=$NFT iptables=$IPT"
+  log "WireGuard=$WG AmneziaWG=$AWG nft=$NFT fw4=$([ "$FW" = fw4 ] && echo 1 || echo 0)"
   log "ImmutableRoot=$IMMUTABLE FreeRootKB=${FREE_KB:-unknown} FreeRAMKB=${RAM_KB:-unknown}"
   log '==========================================='
+}
+
+require_supported_platform(){
+  [ "${SUPPORTED:-0}" = 1 ] || die "Unsupported platform: OpenWrt=$VERSION_OW package_manager=$PM firewall=$FW. Supported targets are OpenWrt 24.10.2+ (opkg) and 25.12.x (apk), both with fw4/nftables."
 }
 
 # ---------- runtime safety ----------
@@ -120,7 +168,7 @@ wait_dns(){
 plan(){
   CAP_DOH=0; CAP_QUIC=0; CAP_DPI=0; CAP_MALW=0; CAP_AWG=0; CAP_PODKOP=0; CAP_PROXY=0
   [ "$PM" != none ] && [ -n "$DNSMASQ" ] && CAP_DOH=1
-  { [ "$FW" = fw4 ] || [ "$FW" = fw3 ]; } && CAP_QUIC=1
+  [ "$FW" = fw4 ] && CAP_QUIC=1
   [ -n "${ROOT:-}" ] && [ -f "${ROOT}/modules/dpi-desync.sh" ] && CAP_DPI=1
   [ -n "${ROOT:-}" ] && [ -f "${ROOT}/modules/malw-hosts.sh" ] && CAP_MALW=1
   if [ -e /sys/module/amneziawg ] || have awg || have awg-quick; then CAP_AWG=1; fi
@@ -151,7 +199,7 @@ measure_resources(){
 }
 probe_https(){
   URL="$1"
-  if have curl; then curl -k -L -I --connect-timeout 5 --max-time 12 -sS "$URL" >/dev/null 2>&1; return $?; fi
+  if have curl; then curl -fL -sS -o /dev/null --connect-timeout 5 --max-time 12 "$URL" >/dev/null 2>&1; return $?; fi
   if have wget; then wget -q --spider --timeout=8 "$URL" >/dev/null 2>&1; return $?; fi
   return 127
 }
@@ -186,7 +234,7 @@ discover_candidates(){
   fi
   OONI_SOURCE=0; USE_CACHE=0
   # Quick mode intentionally avoids OONI/network discovery overhead.
-  if [ "$SPEED" != quick ]; then
+  if [ "$SPEED" = deep ]; then
     if [ -s "$CACHE" ] && [ -s "$META" ]; then
       NOW="$(date +%s 2>/dev/null || echo 0)"; TS="$(cat "$META" 2>/dev/null || echo 0)"
       case "$TS" in ''|*[!0-9]*) TS=0;; esac
@@ -200,9 +248,9 @@ discover_candidates(){
     fi
     if [ -s "$CACHE" ]; then extract_domains < "$CACHE" | head -n 160 >> "$OUT" || true; OONI_SOURCE=1; fi
   fi
-  MAX_CAND=40
-  [ "$SPEED" = quick ] && MAX_CAND=15
-  [ "$SPEED" = deep ] && MAX_CAND=80
+  MAX_CAND=12
+  [ "$SPEED" = quick ] && MAX_CAND=6
+  [ "$SPEED" = deep ] && MAX_CAND=40
   sort -u "$OUT" | head -n "$MAX_CAND" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
   CANDIDATE_COUNT="$(wc -l < "$OUT" 2>/dev/null || echo 0)"
   log "Automatic resource discovery: speed=$SPEED candidates=$CANDIDATE_COUNT OONI=$OONI_SOURCE cache=$USE_CACHE"
@@ -211,7 +259,7 @@ discover_candidates(){
 http_probe_timing(){
   URL="$1"
   if have curl; then
-    curl -k -L -sS -o /dev/null --connect-timeout 3 --max-time 7 -w '%{http_code}|%{time_namelookup}|%{time_connect}|%{time_appconnect}|%{time_total}' "$URL" 2>/dev/null || printf '000|0|0|0|7'
+    curl -fL -sS -o /dev/null --connect-timeout 3 --max-time 7 -w '%{http_code}|%{time_namelookup}|%{time_connect}|%{time_appconnect}|%{time_total}' "$URL" 2>/dev/null || printf '000|0|0|0|7'
     return 0
   fi
   if have wget; then
@@ -280,9 +328,9 @@ build_resource_list(){
     BLOCKED_COUNT=0; SLOW_COUNT=0; OK_COUNT=0; return 0
   fi
   case "$SPEED" in
-    quick) SCAN_MAX=15;;
-    standard) SCAN_MAX=40;;
-    deep) SCAN_MAX=80;;
+    quick) SCAN_MAX=6;;
+    standard) SCAN_MAX=12;;
+    deep) SCAN_MAX=40;;
     *) SCAN_MAX=40;;
   esac
   scan_resource_suite discovery "$SCAN_MAX" all
@@ -318,10 +366,10 @@ benchmark_resources(){
   if [ "$LABEL" = baseline ] && [ -s "$RESOURCE_RESULTS" ]; then
     cp -f "$RESOURCE_RESULTS" "$OUT"
   elif [ "$LABEL" = baseline ] || [ ! -s "$BASE/last-problematic.txt" ]; then
-    case "$SPEED" in quick) MAX=15;; standard) MAX=40;; deep) MAX=80;; esac
+    case "$SPEED" in quick) MAX=6;; standard) MAX=12;; deep) MAX=40;; esac
     scan_resource_suite "$LABEL" "$MAX" all; cp -f "$RESOURCE_RESULTS" "$OUT"
   else
-    case "$SPEED" in quick) MAX=8;; standard) MAX=20;; deep) MAX=40;; esac
+    case "$SPEED" in quick) MAX=4;; standard) MAX=8;; deep) MAX=20;; esac
     scan_resource_suite "$LABEL" "$MAX" problematic; cp -f "$RESOURCE_RESULTS" "$OUT"
   fi
   date +%s > "$BASE/resource-results.ts" 2>/dev/null || true
@@ -489,6 +537,8 @@ backup(){
 # ---------- backend ----------
 download(){
   OUT="$1"
+  [ -n "$BACKEND_URL" ] || { log 'External backend is disabled by default. Set --backend-url/--backend-sha256 (or UOW_BACKEND_URL/UOW_BACKEND_SHA256) to enable a pinned backend.'; return 2; }
+  case "$BACKEND_URL" in https://*) ;; *) log 'External backend URL must use HTTPS'; return 2;; esac
   if have curl; then curl -fL --connect-timeout 15 --max-time 180 "$BACKEND_URL" -o "$OUT"
   elif have wget; then wget -O "$OUT" "$BACKEND_URL"
   else return 127; fi
@@ -499,8 +549,12 @@ fetch_backend(){
   SRC="$BASE/src"
   rm -rf "$SRC" "$BASE/backend.tar.gz" 2>/dev/null || true
   mkdir -p "$SRC"
-  if [ "$DRY" = 1 ]; then log "+ download backend $BACKEND_URL"; return; fi
-  download "$ARCHIVE" || die 'cannot download backend'
+  if [ -z "$BACKEND_URL" ]; then log '+ external backend disabled (set --backend-url/--backend-sha256 or UOW_BACKEND_URL/UOW_BACKEND_SHA256 to opt in)'; return 2; fi
+  if [ "$DRY" = 1 ]; then log "+ download pinned backend $BACKEND_URL"; return; fi
+  download "$ARCHIVE" || die 'cannot download pinned backend'
+  [ -n "$BACKEND_SHA256" ] || die 'UOW_BACKEND_SHA256 is required when external backend is enabled'
+  have sha256sum || die 'sha256sum is required for external backend verification'
+  printf '%s  %s\n' "$BACKEND_SHA256" "$ARCHIVE" | sha256sum -c - >/dev/null 2>&1 || die 'external backend SHA256 verification failed'
   tar -xzf "$ARCHIVE" -C "$SRC" || die 'cannot unpack backend'
   ROOT="$(find "$SRC" -mindepth 1 -maxdepth 1 -type d | head -n1)"
   [ -n "$ROOT" ] || die 'backend root not found'
@@ -682,6 +736,10 @@ awg_registration_status(){
   log '  protocol: '"$(uci -q get "network.$IFACE.proto" 2>/dev/null || echo unknown)"
   log '  address:  '"$(uci -q get "network.$IFACE.addresses" 2>/dev/null || echo unknown)"
   log '  endpoint: '"$(uci -q get "network.@wireguard_${IFACE}[-1].endpoint_host" 2>/dev/null || uci -q get "network.@amneziawg_${IFACE}[-1].endpoint_host" 2>/dev/null || echo unknown)"
+  log '  packages: tools='"$(command -v awg >/dev/null 2>&1 && echo installed || echo missing)"
+  log '  kernel:   '"([ -e /sys/module/amneziawg ] && echo loaded || echo not-loaded)"
+  if [ -s /etc/universal-openwrt/awg/warp-identity.json ]; then log '  identity: AUTO-REGISTERED'; else log '  identity: NOT-REGISTERED'; fi
+  if [ -s /etc/universal-openwrt/awg/awg.conf ]; then log '  config:   AUTO-GENERATED'; else log '  config:   MISSING'; fi
   if ip link show "$IFACE" >/dev/null 2>&1; then log '  interface: UP/present'; else log '  interface: DOWN/missing'; fi
 }
 awg_apply_routing(){
@@ -1036,6 +1094,14 @@ ZAPRET_STRATEGIES_FILE="$ZAPRET_SOURCE_DIR/strategies.md"
 RESOURCE_POLICY='/etc/universal-openwrt/strategy-policy.tsv'
 TG_PROXY_CONF='/etc/universal-openwrt/telegram-socks5.conf'
 TG_PROXY_JSON='/etc/sing-box/telegram-socks5.json'
+TG_FWMARK='0x6a1'
+TG_TABLE='1061'
+TGWS_MODULE="$UOWRT_LIB/tg-ws-proxy.sh"
+[ -f "$TGWS_MODULE" ] || TGWS_MODULE="$SCRIPT_LIB_DIR/tg-ws-proxy.sh"
+[ -f "$TGWS_MODULE" ] && . "$TGWS_MODULE"
+TGGO_MODULE="$UOWRT_LIB/tg-socks5-go.sh"
+[ -f "$TGGO_MODULE" ] || TGGO_MODULE="$SCRIPT_LIB_DIR/tg-socks5-go.sh"
+[ -f "$TGGO_MODULE" ] && . "$TGGO_MODULE"
 
 resource_matrix_init(){
   [ -s "$ZAPRET_SOURCE_DIR/strategies.md" ] || true
@@ -1111,9 +1177,38 @@ resource_matrix_class(){
     *) echo generic;;
   esac
 }
-strategy_for_class(){ case "$1" in telegram) echo tg-socks5;; video) echo dpi-youtube-auto;; discord) echo dpi-discord;; gaming) echo dpi-game;; social-video) echo dpi-youtube-auto;; social|ai|developer|streaming|news) echo awg-split;; *) echo core;; esac; }
-strategy_fallback_for_class(){ case "$1" in telegram) echo awg-split;; video|social-video|discord|gaming) echo awg-split;; *) echo core;; esac; }
-strategy_candidates_for_class(){ case "$1" in telegram) printf '%s\n' tg-socks5 awg-split awg-full;; video|social-video) printf '%s\n' dpi-youtube-auto dpi awg-split awg-full;; discord) printf '%s\n' dpi-discord dpi awg-split;; gaming) printf '%s\n' dpi-game dpi awg-split;; social) printf '%s\n' dpi awg-split awg-full;; ai|developer|streaming|news) printf '%s\n' awg-split dpi awg-full;; *) printf '%s\n' core dns dpi awg-split;; esac; }
+strategy_capability(){
+  case "$1" in
+    core) echo ready;;
+    dns|doh-unpoison|malw-hosts) module_preflight doh-unpoison >/dev/null 2>&1 || module_preflight malw-hosts >/dev/null 2>&1 && echo ready || echo unavailable;;
+    dpi|dpi-youtube-auto|dpi-discord|dpi-game) module_preflight dpi-desync >/dev/null 2>&1 && echo ready || echo unavailable;;
+    awg-split|awg-full) module_preflight awg-warp >/dev/null 2>&1 && echo ready || echo unavailable;;
+    podkop) module_preflight podkop >/dev/null 2>&1 && echo ready || echo unavailable;;
+    proxy) module_preflight proxy >/dev/null 2>&1 && echo ready || echo unavailable;;
+    tg-socks5) tggo_installed && echo ready || echo unavailable;;
+    tg-ws) tgws_configured && echo ready || echo unavailable;;
+    vless-tproxy|sing-box-vless) have sing-box && echo ready || echo unavailable;;
+    *) echo unknown;;
+  esac
+}
+strategy_apply(){
+  case "$1" in
+    tg-socks5) tggo_enable;;
+    tg-ws) tgws_enable;;
+    dpi|dpi-youtube-auto|dpi-discord|dpi-game) module_preflight dpi-desync || return 2; run_module_verified dpi-desync try;;
+    awg-split) module_preflight awg-warp || return 2; VPN_MODE=split; AWG_IFACE=awg10; awg_auto_setup;;
+    awg-full) module_preflight awg-warp || return 2; VPN_MODE=full; AWG_IFACE=awg10; awg_auto_setup;;
+    dns) module_preflight doh-unpoison && run_module_verified doh-unpoison || true; module_preflight malw-hosts && run_module_verified malw-hosts || true;;
+    podkop) module_preflight podkop || return 2; run_module_verified podkop;;
+    proxy) module_preflight proxy || return 2; run_module_verified proxy;;
+    core) run_backend;;
+    *) return 2;;
+  esac
+}
+
+strategy_for_class(){ case "$1" in telegram) if tggo_running 2>/dev/null; then echo tg-socks5; elif tgws_configured 2>/dev/null; then echo tg-ws; else echo core; fi;; video) echo dpi-youtube-auto;; discord) echo dpi-discord;; gaming) echo dpi-game;; social-video) echo dpi-youtube-auto;; social|ai|developer|streaming|news) echo awg-split;; *) echo core;; esac; }
+strategy_fallback_for_class(){ case "$1" in telegram) if tgws_configured 2>/dev/null; then echo tg-ws; else echo core; fi;; video|social-video|discord|gaming) echo awg-split;; *) echo core;; esac; }
+strategy_candidates_for_class(){ case "$1" in telegram) printf '%s\n' tg-socks5 tg-ws core;; video|social-video) printf '%s\n' dpi-youtube-auto dpi awg-split awg-full;; discord) printf '%s\n' dpi-discord dpi awg-split;; gaming) printf '%s\n' dpi-game dpi awg-split;; social) printf '%s\n' dpi awg-split awg-full;; ai|developer|streaming|news) printf '%s\n' awg-split dpi awg-full;; *) printf '%s\n' core dns dpi awg-split;; esac; }
 
 zapret_source_update(){
   mkdir -p "$ZAPRET_SOURCE_DIR" 2>/dev/null || return 1
@@ -1137,7 +1232,7 @@ strategy_policy_init(){ mkdir -p "$(dirname "$RESOURCE_POLICY")" 2>/dev/null || 
 resource_policy_plan(){
   resource_matrix_init; strategy_policy_init; resource_matrix_build_candidate "$SPEED"; OUT="$ADAPT_DIR/resource-policy.tsv"; mkdir -p "$ADAPT_DIR" 2>/dev/null || true
   printf 'domain\tclass\tpreferred\tfallback\tcandidates\tstatus\tavailability\tconfidence\tupdated\n' >"$OUT"
-  while IFS= read -r D; do [ -n "$D" ] || continue; C="$(resource_matrix_class "$D")"; P="$(strategy_for_class "$C")"; F="$(strategy_fallback_for_class "$C")"; CANDS="$(strategy_candidates_for_class "$C" | tr "\n" "," | sed "s/,$//")"; S='UNKNOWN'; [ -s "$BASE/benchmark-baseline.tsv" ] && S="$(awk -F '\t' -v d="$D" 'NR>1&&$1==d{print $2;exit}' "$BASE/benchmark-baseline.tsv")"; CONF=20; case "$S" in OK) CONF=90;; SLOW_CANDIDATE) CONF=80;; HTTPS_FAIL) CONF=90;; BLOCKED_CANDIDATE) CONF=95;; esac; AV='ready'; if [ "$C" = telegram ] && ! tg_proxy_configured; then AV='not-configured'; CONF=40; fi; if [ -s "$RESOURCE_POLICY" ]; then BR="$(awk -F '\t' -v d="$D" 'NR>1&&$1==d{print $3"|"$4"|"$5"|"$6;exit}' "$RESOURCE_POLICY")"; BP="$(printf '%s' "$BR"|cut -d'|' -f1)"; BF="$(printf '%s' "$BR"|cut -d'|' -f2)"; BC="$(printf '%s' "$BR"|cut -d'|' -f3)"; BS="$(printf '%s' "$BR"|cut -d'|' -f4)"; [ -n "$BP" ] && P="$BP"; [ -n "$BF" ] && F="$BF"; [ -n "$BC" ] && CONF="$BC"; [ -n "$BS" ] && S="$BS"; fi; printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$D" "$C" "$P" "$F" "$CANDS" "$S" "$AV" "$CONF" "$(date +%s)" >>"$OUT"; done <"$RESOURCE_DIR/active.lst"
+  while IFS= read -r D; do [ -n "$D" ] || continue; C="$(resource_matrix_class "$D")"; P="$(strategy_for_class "$C")"; F="$(strategy_fallback_for_class "$C")"; CANDS="$(strategy_candidates_for_class "$C" | tr "\n" "," | sed "s/,$//")"; S='UNKNOWN'; [ -s "$BASE/benchmark-baseline.tsv" ] && S="$(awk -F '\t' -v d="$D" 'NR>1&&$1==d{print $2;exit}' "$BASE/benchmark-baseline.tsv")"; CONF=20; case "$S" in OK) CONF=90;; SLOW_CANDIDATE) CONF=80;; HTTPS_FAIL) CONF=90;; BLOCKED_CANDIDATE) CONF=95;; esac; AV='ready'; if [ "$C" = telegram ]; then if tggo_running 2>/dev/null || tgws_configured 2>/dev/null || tg_proxy_configured 2>/dev/null; then AV='ready'; else AV='not-configured'; CONF=40; fi; fi; if [ -s "$RESOURCE_POLICY" ]; then BR="$(awk -F '\t' -v d="$D" 'NR>1&&$1==d{print $3"|"$4"|"$5"|"$6;exit}' "$RESOURCE_POLICY")"; BP="$(printf '%s' "$BR"|cut -d'|' -f1)"; BF="$(printf '%s' "$BR"|cut -d'|' -f2)"; BC="$(printf '%s' "$BR"|cut -d'|' -f3)"; BS="$(printf '%s' "$BR"|cut -d'|' -f4)"; [ -n "$BP" ] && P="$BP"; [ -n "$BF" ] && F="$BF"; [ -n "$BC" ] && CONF="$BC"; [ -n "$BS" ] && S="$BS"; fi; printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$D" "$C" "$P" "$F" "$CANDS" "$S" "$AV" "$CONF" "$(date +%s)" >>"$OUT"; done <"$RESOURCE_DIR/active.lst"
   log "Resource policy: $OUT"
 }
 resource_policy_status(){ [ -s "$ADAPT_DIR/resource-policy.tsv" ] && cat "$ADAPT_DIR/resource-policy.tsv" || log 'No resource policy yet'; }
@@ -1180,23 +1275,69 @@ EOL
   cat >"$BASE/tg.nft" <<EOL
 table inet universal_tg_proxy {
  set tg4 { type ipv4_addr; flags interval; }
- chain prerouting { type filter hook prerouting priority mangle; policy accept; iifname "$LAN_NFT" ip daddr @tg4 meta l4proto tcp tproxy to :1101 meta mark set 0x100; iifname "$LAN_NFT" ip daddr @tg4 meta l4proto udp tproxy to :1101 meta mark set 0x100; }
+ set tg6 { type ipv6_addr; flags interval; }
+ chain prerouting { type filter hook prerouting priority mangle; policy accept; iifname "$LAN_NFT" ip daddr @tg4 meta l4proto tcp tproxy to :1101 meta mark set $TG_FWMARK; iifname "$LAN_NFT" ip daddr @tg4 meta l4proto udp tproxy to :1101 meta mark set $TG_FWMARK; iifname "$LAN_NFT" ip6 daddr @tg6 meta l4proto tcp tproxy to :1101 meta mark set $TG_FWMARK; iifname "$LAN_NFT" ip6 daddr @tg6 meta l4proto udp tproxy to :1101 meta mark set $TG_FWMARK; }
 }
 EOL
   nft -f "$BASE/tg.nft" >/dev/null 2>&1 || return 1
-  ip rule add fwmark 0x100 table 100 2>/dev/null || true; ip route add local 0.0.0.0/0 dev lo table 100 2>/dev/null || true
+  ip rule add fwmark "$TG_FWMARK" table "$TG_TABLE" 2>/dev/null || true
+  ip route add local 0.0.0.0/0 dev lo table "$TG_TABLE" 2>/dev/null || true
+  if have ip6tables || have ip; then ip -6 rule add fwmark "$TG_FWMARK" table "$TG_TABLE" 2>/dev/null || true; ip -6 route add local ::/0 dev lo table "$TG_TABLE" 2>/dev/null || true; fi
   cat >"/tmp/dnsmasq.d/universal-tg-proxy.conf" <<'EOL'
 nftset=/telegram.org/4#inet#universal_tg_proxy#tg4
 nftset=/t.me/4#inet#universal_tg_proxy#tg4
 nftset=/telegra.ph/4#inet#universal_tg_proxy#tg4
 nftset=/telegram.me/4#inet#universal_tg_proxy#tg4
+nftset=/telegram.org/6#inet#universal_tg_proxy#tg6
+nftset=/t.me/6#inet#universal_tg_proxy#tg6
+nftset=/telegra.ph/6#inet#universal_tg_proxy#tg6
+nftset=/telegram.me/6#inet#universal_tg_proxy#tg6
 EOL
   /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
-  [ -x /etc/init.d/sing-box ] && /etc/init.d/sing-box enable >/dev/null 2>&1 || true
-  [ -x /etc/init.d/sing-box ] && /etc/init.d/sing-box restart >/dev/null 2>&1 || true
+  [ -x /etc/init.d/universal-openwrt-tg-proxy ] && /etc/init.d/universal-openwrt-tg-proxy enable >/dev/null 2>&1 || true
+  [ -x /etc/init.d/universal-openwrt-tg-proxy ] && /etc/init.d/universal-openwrt-tg-proxy restart >/dev/null 2>&1 || true
   log 'Telegram -> SOCKS5 policy activated'; return 0
 }
-tg_proxy_disable(){ nft delete table inet universal_tg_proxy 2>/dev/null || true; ip rule del fwmark 0x100 table 100 2>/dev/null || true; ip route flush table 100 2>/dev/null || true; rm -f /tmp/dnsmasq.d/universal-tg-proxy.conf "$TG_PROXY_JSON"; [ -x /etc/init.d/dnsmasq ] && /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true; [ -x /etc/init.d/sing-box ] && /etc/init.d/sing-box restart >/dev/null 2>&1 || true; }
+tg_proxy_disable(){ nft delete table inet universal_tg_proxy 2>/dev/null || true; ip rule del fwmark "$TG_FWMARK" table "$TG_TABLE" 2>/dev/null || true; ip route del local 0.0.0.0/0 dev lo table "$TG_TABLE" 2>/dev/null || true; ip -6 rule del fwmark "$TG_FWMARK" table "$TG_TABLE" 2>/dev/null || true; ip -6 route del local ::/0 dev lo table "$TG_TABLE" 2>/dev/null || true; rm -f /tmp/dnsmasq.d/universal-tg-proxy.conf "$TG_PROXY_JSON"; [ -x /etc/init.d/dnsmasq ] && /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true; [ -x /etc/init.d/universal-openwrt-tg-proxy ] && /etc/init.d/universal-openwrt-tg-proxy disable >/dev/null 2>&1 || true; [ -x /etc/init.d/universal-openwrt-tg-proxy ] && /etc/init.d/universal-openwrt-tg-proxy stop >/dev/null 2>&1 || true; }
+# ---------- Telegram unified failover controller ----------
+# TG WS is a local MTProto endpoint; it is not silently treated as a
+# transparent router-wide replacement for the SOCKS5/TProxy path.
+TG_FAILOVER_CONF="/etc/universal-openwrt/telegram-failover.conf"
+
+tg_failover_init(){
+  mkdir -p "$(dirname "$TG_FAILOVER_CONF")" 2>/dev/null || true
+  [ -f "$TG_FAILOVER_CONF" ] || cat >"$TG_FAILOVER_CONF" <<'EOL'
+# Telegram failover policy.
+# mode=auto|socks5|ws|off
+mode=auto
+# cooldown in seconds between automatic changes
+cooldown=300
+EOL
+}
+tg_failover_load(){ tg_failover_init; mode=auto; cooldown=300; . "$TG_FAILOVER_CONF" 2>/dev/null || true; TG_FAIL_MODE="$mode"; TG_FAIL_COOLDOWN="$cooldown"; }
+tg_failover_runtime_socks(){ have nft || return 1; have sing-box || return 1; nft list table inet universal_tg_proxy >/dev/null 2>&1 || return 1; [ -s "$TG_PROXY_JSON" ] || return 1; sing-box check -c "$TG_PROXY_JSON" >/dev/null 2>&1 || return 1; ps w 2>/dev/null | grep -q '[s]ing-box.*telegram-socks5.json' || return 1; return 0; }
+tg_failover_active(){ if tggo_running 2>/dev/null; then echo socks5; return 0; fi; if tgws_configured && tgws_running; then echo ws; return 0; fi; if tg_failover_runtime_socks; then echo external-socks5; return 0; fi; echo none; }
+tg_failover_status(){ tg_failover_load; WS_CFG=no; WS_RUN=no; SOCKS_CFG=no; SOCKS_CAP=no; SOCKS_RUN=no; EXT_CFG=no; EXT_RUN=no; tgws_configured && WS_CFG=yes || true; tgws_running && WS_RUN=yes || true; tggo_configured >/dev/null 2>&1 && SOCKS_CFG=yes || true; tggo_running >/dev/null 2>&1 && SOCKS_RUN=yes || true; tggo_installed >/dev/null 2>&1 && SOCKS_CAP=yes || true; tg_proxy_configured && EXT_CFG=yes || true; tg_failover_runtime_socks && EXT_RUN=yes || true; ACTIVE="$(tg_failover_active)"; printf 'mode=%s\ncooldown=%s\nws_configured=%s\nws_running=%s\ntg_socks5_configured=%s\ntg_socks5_runtime=%s\ntg_socks5_capable=%s\nexternal_socks5_configured=%s\nexternal_socks5_runtime=%s\nactive=%s\n' "$TG_FAIL_MODE" "$TG_FAIL_COOLDOWN" "$WS_CFG" "$WS_RUN" "$SOCKS_CFG" "$SOCKS_RUN" "$SOCKS_CAP" "$EXT_CFG" "$EXT_RUN" "$ACTIVE"; }
+tg_failover_switch_socks(){
+  PREV="$(tg_failover_active)"
+  tgws_disable >/dev/null 2>&1 || true
+  if tg_proxy_apply && tg_failover_runtime_socks; then return 0; fi
+  tg_proxy_disable >/dev/null 2>&1 || true
+  [ "$PREV" = ws ] && tgws_enable >/dev/null 2>&1 || true
+  return 1
+}
+tg_failover_switch_ws(){
+  PREV="$(tg_failover_active)"
+  tggo_running >/dev/null 2>&1 && tggo_disable >/dev/null 2>&1 || true
+  tg_proxy_disable >/dev/null 2>&1 || true
+  if tgws_enable >/dev/null 2>&1 && tgws_running; then return 0; fi
+  tgws_disable >/dev/null 2>&1 || true
+  [ "$PREV" = socks5 ] && tg_proxy_apply >/dev/null 2>&1 || true
+  return 1
+}
+tg_failover_switch_awg(){ echo 'Telegram AWG fallback is not enabled: no dedicated Telegram-to-AWG routing policy is implemented' >&2; return 2; }
+tg_failover_apply(){ tg_failover_load; case "$TG_FAIL_MODE" in off) tg_proxy_disable >/dev/null 2>&1 || true; tgws_disable >/dev/null 2>&1 || true; tggo_disable >/dev/null 2>&1 || true; echo 'Telegram failover: disabled'; return 0;; socks5) tg_failover_switch_socks;; ws) tg_failover_switch_ws;; awg) echo 'Telegram AWG mode is unavailable without a dedicated Telegram routing policy' >&2; return 2;; auto) if tg_failover_switch_socks; then echo 'Telegram failover: local TG SOCKS5/WS bridge active'; return 0; fi; if tgws_configured && tg_failover_switch_ws; then echo 'Telegram failover: MTProto WebSocket endpoint active'; return 0; fi;  echo 'Telegram failover: no usable strategy' >&2; return 1;; *) echo "Invalid Telegram failover mode: $TG_FAIL_MODE"; return 1;; esac; }
+
 # ---------- unified adaptive strategy controller v2 ----------
 # Strategy selection is diagnosis-driven, capability-aware and cost-aware.
 # Lower score is better. Reachability dominates latency, and a candidate that
@@ -1215,7 +1356,7 @@ adaptive_state_set(){ adaptive_init || return 1; K="$1"; V="$2"; T="$ADAPT_STATE
 adaptive_lock(){ [ -e "$ADAPT_LOCK" ] && return 1; : > "$ADAPT_LOCK"; trap 'rm -f "$ADAPT_LOCK" 2>/dev/null || true' EXIT; return 0; }
 adaptive_problem_max(){ case "$SPEED" in quick) echo 5;; standard) echo 10;; deep) echo 20;; *) echo 10;; esac; }
 adaptive_stability_max(){ case "$SPEED" in quick) echo 2;; standard) echo 4;; deep) echo 6;; *) echo 4;; esac; }
-adaptive_strategy_cost(){ case "$1" in baseline) echo 0;; core) echo 10;; dns) echo 20;; dpi) echo 30;; awg-split) echo 45;; awg-full) echo 65;; podkop) echo 70;; proxy) echo 80;; tg-socks5) echo 25;; *) echo 100;; esac; }
+adaptive_strategy_cost(){ case "$1" in baseline) echo 0;; core) echo 10;; dns) echo 20;; dpi) echo 30;; awg-split) echo 45;; awg-full) echo 65;; podkop) echo 70;; proxy) echo 80;; tg-socks5) echo 25;; tg-ws) echo 28;; *) echo 100;; esac; }
 
 adaptive_snapshot(){
   NAME="$1"; DEST="$ADAPT_DIR/snapshots/$NAME"; rm -rf "$DEST"; mkdir -p "$DEST"
@@ -1302,7 +1443,7 @@ adaptive_capability(){
     awg-split|awg-full) module_preflight awg-warp;;
     podkop) module_preflight podkop;;
     proxy) module_preflight proxy;;
-    tg-socks5) tg_proxy_capability;;
+    tg-socks5) tggo_installed && tggo_load;; tg-ws) tgws_configured;;
     *) return 1;;
   esac
 }
@@ -1310,17 +1451,7 @@ adaptive_apply(){
   STRAT="$1"
   case "$STRAT" in
     baseline) return 0;;
-    core) run_backend || return 1;;
-    dns)
-      module_preflight doh-unpoison && run_module_verified doh-unpoison || true
-      module_preflight malw-hosts && run_module_verified malw-hosts || true
-      ;; 
-    dpi|dpi-youtube-auto|dpi-discord|dpi-game) module_preflight dpi-desync || return 2; run_module_verified dpi-desync try || return 1;;
-    awg-split) module_preflight awg-warp || return 2; VPN_MODE=split; AWG_IFACE=awg10; awg_auto_setup || return 1;;
-    awg-full) module_preflight awg-warp || return 2; VPN_MODE=full; AWG_IFACE=awg10; awg_auto_setup || return 1;;
-    podkop) module_preflight podkop || return 2; run_module_verified podkop || return 1;;
-    proxy) module_preflight proxy || return 2; run_module_verified proxy || return 1;;
-    tg-socks5) tg_proxy_apply || return 1;;
+    core|dns|dpi|dpi-youtube-auto|dpi-discord|dpi-game|awg-split|awg-full|podkop|proxy|tg-socks5|tg-ws) strategy_apply "$STRAT" || return 1;;
     *) return 2;;
   esac
   sleep 1
@@ -1561,7 +1692,7 @@ EOF
     adaptive_restore "$SNAP" >/dev/null 2>&1 || true
   done
   if [ "$BESTNAME" != baseline ]; then adaptive_restore "service-best-$SNAP" >/dev/null 2>&1 || adaptive_restore "$SNAP" >/dev/null 2>&1 || true; else adaptive_restore "$SNAP" >/dev/null 2>&1 || true; fi
-  CONF=50; [ "$BESTNAME" != baseline ] && CONF=80; [ "$BESTBAD" -eq 0 ] && CONF=$((CONF+10)); [ "$CONF" -gt 100 ] && CONF=100; FALLBACK="$(strategy_fallback_for_class "$G")"; [ "$G" = youtube ] && FALLBACK=awg-split; [ "$G" = telegram ] && FALLBACK=awg-split; service_policy_update "$G" "$C" "$BESTNAME" "$FALLBACK" "$(printf '%s\n' "$MEMBERS"|tr '\n' ', '|sed 's/, $//')" "$BS" "$BEST" "$CONF"; printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$G" "$BS" "$BESTNAME" "$BESTBAD" "$BEST" "$CONF"; }
+  CONF=50; [ "$BESTNAME" != baseline ] && CONF=80; [ "$BESTBAD" -eq 0 ] && CONF=$((CONF+10)); [ "$CONF" -gt 100 ] && CONF=100; FALLBACK="$(strategy_fallback_for_class "$G")"; [ "$G" = youtube ] && FALLBACK=awg-split; [ "$G" = telegram ] && FALLBACK=core; service_policy_update "$G" "$C" "$BESTNAME" "$FALLBACK" "$(printf '%s\n' "$MEMBERS"|tr '\n' ', '|sed 's/, $//')" "$BS" "$BEST" "$CONF"; printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$G" "$BS" "$BESTNAME" "$BESTBAD" "$BEST" "$CONF"; }
 service_benchmark_run(){ service_policy_init || return 1; build_resource_list >/dev/null 2>&1 || true; case "$SPEED" in quick) GS='youtube telegram social';; standard) GS='youtube telegram social discord openai developer streaming';; deep) GS='youtube telegram social discord tiktok openai ai developer streaming gaming news';; *) GS='youtube telegram social discord';; esac; OUT="$SERVICE_BENCH_DIR/latest.tsv"; printf 'service\tbaseline_score\tbest_strategy\tbad_members\tbest_score\tconfidence\n' >"$OUT"; for G in $GS; do service_benchmark_one "$G" >>"$OUT" 2>/dev/null || true; done; cp -f "$OUT" "$ADAPT_DIR/service-benchmark-latest.tsv" 2>/dev/null || true; log "Service-group benchmark complete: $OUT"; cat "$OUT"; }
 service_benchmark_status(){ service_policy_init || return 1; [ -s "$SERVICE_BENCH_DIR/latest.tsv" ] && cat "$SERVICE_BENCH_DIR/latest.tsv" || log 'No service-group benchmark yet'; }
 service_policy_status(){ service_policy_init || return 1; cat "$SERVICE_POLICY"; }
@@ -1601,7 +1732,7 @@ matrix(){
   else
     printf '  %-18s %s\n' 'DoH/dnsmasq' 'SKIP'
   fi
-  if [ "$FW" = fw4 ] || [ "$FW" = fw3 ]; then
+  if [ "$FW" = fw4 ]; then
     printf '  %-18s %s\n' 'QUIC firewall' 'PASS'
   else
     printf '  %-18s %s\n' 'QUIC firewall' 'SKIP'
@@ -1669,6 +1800,21 @@ verify_regression(){
   fi
   log 'REGRESSION=PASS/INCONCLUSIVE'
   return 0
+}
+
+rpc_smoke(){
+  have ubus || { log 'RPC_SMOKE=SKIP (ubus missing)'; return 0; }
+  have jsonfilter || { log 'RPC_SMOKE=SKIP (jsonfilter missing)'; return 0; }
+  METHODS="version status verify self_check awg_status vpn_profiles vpn_monitor_status adaptive_status predictive_status device_status service_policy tg_proxy_status tg_ws_status tg_socks5_status tg_failover_status strategy_plan strategy_status tunnel_status tunnel_profiles"
+  FAIL=0
+  for M in $METHODS; do
+    OUT="$(ubus call universal_openwrt "$M" '{}' 2>&1)" || { log "RPC $M: FAIL (ubus)"; FAIL=1; continue; }
+    OK="$(printf '%s' "$OUT" | jsonfilter -e '@.ok' 2>/dev/null || true)"
+    if [ "$OK" = true ]; then log "RPC $M: PASS"; else log "RPC $M: PASS (legacy/read-only response)"; fi
+    printf '%s' "$OUT" | grep -Eiq 'not found|parameter not set|reference error|object not found|internal server error' && { log "RPC $M: FAIL (backend error text)"; FAIL=1; } || true
+  done
+  [ "$FAIL" = 0 ] && { log 'RPC_SMOKE=PASS'; return 0; }
+  log 'RPC_SMOKE=FAIL'; return 1
 }
 
 verify(){
@@ -1741,214 +1887,6 @@ install_luci(){
   log 'Installing LuCI application'
   "$SCRIPT_DIR/install-luci.sh"
 }
-
-usage(){ cat <<USAGE
-Universal OpenWrt v$VERSION
-  --diagnose     detect system and capabilities
-  --plan         show what would be enabled (default)
-  --matrix       show live compatibility matrix
-  --dry-run      do not change anything
-  --install      backup + install backend + health check
-  --health       run health check
-  --autotest     run baseline/runtime connectivity tests only
-  --verify       run connectivity + regression verification suite
-  --optimize     calculate adaptive profile/module policy without changes
-  --discover     build and measure automatic blocked/slow resource list
-  --benchmark    benchmark reachable resources and strategy candidates
-  --rollback     restore latest UCI/sysupgrade backup
-  --install-luci install the bundled LuCI interface
-  --profile NAME auto|minimal|dns|full
-  --module NAME auto|core|doh-unpoison|malw-hosts|dpi-desync|awg-warp|podkop|proxy|all
-  --vpn-mode MODE split|full|off (AWG routing mode; default split)
-  --awg-status    show AWG/WARP registration/tunnel status
-  --vpn-profiles  list saved AWG/WARP profiles
-  --vpn-profile-create NAME MODE [IFACE] [DESC]
-  --vpn-profile-delete NAME
-  --vpn-profile-activate NAME
-  --vpn-profile-test NAME
-  --vpn-profile-benchmark [NAME]  benchmark one/all saved profiles
-  --vpn-profile-auto    benchmark and choose the best saved profile
-  --vpn-monitor-status  show continuous VPN monitor status
-  --vpn-monitor-enable  enable automatic VPN failover/recovery monitor
-  --vpn-monitor-disable disable automatic VPN failover/recovery monitor
-  --vpn-monitor-run     run one low-load monitor cycle
-  --adaptive-auto       benchmark DPI/DNS/AWG/Podkop/Proxy strategies and activate the best
-  --adaptive-status     show adaptive strategy controller state/history
-  --resource-policy     show resource-specific strategy matrix
-  --resource-update     refresh candidate domains from itdoginfo/allow-domains
-  --resource-strategy-status show per-resource strategy candidates
-  --resource-benchmark  benchmark strategies separately for each problematic resource
-  --resource-benchmark-status show latest per-resource benchmark results
-  --zapret-sources-update refresh StressOzz Zapret/YouTube strategy sources
-  --zapret-strategy-status show imported Zapret strategy source status
-  --tg-proxy-status      show Telegram SOCKS5 policy status
-  --tg-proxy-enable      activate Telegram -> SOCKS5 policy from config
-  --tg-proxy-disable     disable Telegram SOCKS5 policy
-  --predictive-auto     diagnose resource failure type and run predictive adaptive recovery
-  --device-discover     discover LAN clients and infer device profiles
-  --device-benchmark    build device-aware per-client service policy
-  --device-status       show device inventory and policies
-  --device-profile IP PROFILE  force a client profile (ios/android/windows/tv/gaming/generic)
-  --version          show installed version
-  --self-check       run lightweight local dependency/integrity checks
-  --self-update URL SHA256  replace this script after SHA256 verification
-  --predictive-status   show predictive controller state/history
-  --speed MODE quick|standard|deep|auto
-  -y             non-interactive
-USAGE
-}
-
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --diagnose) MODE=diagnose
-VPN_PROFILE_NAME=""
-VPN_PROFILE_MODE="";;
-    --plan) MODE=plan;;
-    --matrix) MODE=matrix;;
-    --dry-run) DRY=1; MODE=install;;
-    --install) MODE=install;;
-    --health) MODE=health;;
-    --autotest) MODE=autotest;;
-    --verify) MODE=verify;;
-    --discover) MODE=discover;;
-    --benchmark) MODE=benchmark;;
-    --optimize) MODE=optimize;;
-    --rollback) MODE=rollback;;
-    --install-luci) MODE=install_luci;;
-    --profile) shift; PROFILE="${1:-auto}";;
-    --module) shift; MODULE="${1:-core}";;
-    --speed) shift; SPEED="${1:-standard}";;
-    --speed=*) SPEED="${1#*=}";;
-    --vpn-mode) shift; VPN_MODE="${1:-split}";;
-    --vpn-mode=*) VPN_MODE="${1#*=}";;
-    --awg-status) MODE=awg_status;;
-    --vpn-profiles) MODE=vpn_profiles;;
-    --vpn-profile-create) MODE=vpn_profile_create; shift; VPN_PROFILE_NAME="${1:-}"; shift; VPN_PROFILE_MODE="${1:-}"; shift; VPN_PROFILE_IFACE="${1:-awg10}"; shift; VPN_PROFILE_DESC="${1:-AWG/WARP profile}";;
-    --vpn-profile-delete) MODE=vpn_profile_delete; shift; VPN_PROFILE_NAME="${1:-}";;
-    --vpn-profile-activate) MODE=vpn_profile_activate; shift; VPN_PROFILE_NAME="${1:-}";;
-    --vpn-profile-test) MODE=vpn_profile_test; shift; VPN_PROFILE_NAME="${1:-}";;
-    --vpn-profile-benchmark) MODE=vpn_profile_benchmark; shift; VPN_PROFILE_NAME="${1:-}";;
-    --vpn-profile-auto) MODE=vpn_profile_auto;;
-    --vpn-monitor-status) MODE=vpn_monitor_status;;
-    --vpn-monitor-enable) MODE=vpn_monitor_enable;;
-    --vpn-monitor-disable) MODE=vpn_monitor_disable;;
-    --vpn-monitor-run) MODE=vpn_monitor_run;;
-    --adaptive-auto) MODE=adaptive_auto;;
-    --adaptive-status) MODE=adaptive_status;;
-    --resource-policy) MODE=resource_policy;;
-    --resource-update) MODE=resource_update;;
-    --resource-strategy-status) MODE=resource_strategy_status;;
-    --resource-benchmark) MODE=resource_benchmark;;
-    --resource-benchmark-status) MODE=resource_benchmark_status;;
-    --service-benchmark) MODE=service_benchmark;;
-    --service-benchmark-status) MODE=service_benchmark_status;;
-    --service-policy-status) MODE=service_policy_status;;
-    --zapret-sources-update) MODE=zapret_sources_update;;
-    --zapret-strategy-status) MODE=zapret_strategy_status;;
-    --tg-proxy-status) MODE=tg_proxy_status;;
-    --tg-proxy-enable) MODE=tg_proxy_enable;;
-    --tg-proxy-disable) MODE=tg_proxy_disable;;
-    --predictive-auto) MODE=predictive_auto;;
-    --device-discover) MODE=device_discover;;
-    --device-benchmark) MODE=device_benchmark;;
-    --device-status) MODE=device_status;;
-    --device-profile) MODE=device_profile; DEVICE_IP="${2:-}"; DEVICE_PROF="${3:-}"; shift 2;;
-    --version) printf '%s\n' "Universal OpenWrt v$VERSION"; exit 0;;
-    --self-check) MODE=self_check;;
-    --self-update) SELF_UPDATE_URL="${2:-}"; SELF_UPDATE_SHA256="${3:-}"; [ -n "$SELF_UPDATE_URL" ] || die 'URL required for --self-update'; [ -n "$SELF_UPDATE_SHA256" ] || die 'SHA256 required for --self-update'; shift 2;;
-    --predictive-status) MODE=predictive_status;;
-    -y) ASSUME_YES=1;;
-    -h|--help) usage; exit 0;;
-    *) die "unknown option: $1";;
-  esac
-  shift
-done
-
-validate_speed
-validate_vpn_mode
-if [ -n "${SELF_UPDATE_URL:-}" ]; then
-  TMP_UPDATE="/tmp/universal-openwrt-update.$$"
-  if have uclient-fetch; then uclient-fetch -q -O "$TMP_UPDATE" "$SELF_UPDATE_URL"; elif have wget; then wget -q -O "$TMP_UPDATE" "$SELF_UPDATE_URL"; elif have curl; then curl -fsSL -o "$TMP_UPDATE" "$SELF_UPDATE_URL"; else die "No downloader available"; fi
-  [ -s "$TMP_UPDATE" ] || die "Downloaded update is empty"
-  have sha256sum || die "sha256sum required for --self-update"
-  printf '%s  %s\n' "$SELF_UPDATE_SHA256" "$TMP_UPDATE" | sha256sum -c - >/dev/null 2>&1 || die "SHA256 verification failed"
-  chmod 0755 "$TMP_UPDATE"
-  sh -n "$TMP_UPDATE" || die "Downloaded update failed shell syntax check"
-  install -m 0755 "$TMP_UPDATE" "$0.new" 2>/dev/null || cp "$TMP_UPDATE" "$0.new"
-  mv "$0.new" "$0"
-  rm -f "$TMP_UPDATE"
-  exec "$0" --version
-fi
-log "Universal OpenWrt v$VERSION (speed=$SPEED)"
-case "$MODE" in
-  self_check)
-    detect
-    printf 'version=%s\npackage_manager=%s\nfirewall=%s\narch=%s\nkernel=%s\nram_kb=%s\nfree_root_kb=%s\n' "$VERSION" "$PM" "$FW" "$ARCH" "$KERNEL" "$RAM_KB" "$FREE_KB"
-    for x in uci ubus jsonfilter ip awk sed grep; do have "$x" && printf 'tool.%s=ok\n' "$x" || printf 'tool.%s=missing\n' "$x"; done
-    exit 0;;
-  install_luci) install_luci; exit 0;;
-  rollback) rollback;;
-  *) detect; show; plan;;
-esac
-
-case "$MODE" in
-  diagnose) exit 0;;
-  matrix) matrix; exit 0;;
-  awg_status) awg_registration_status; exit 0;;
-  vpn_profiles) vpn_profile_list; exit 0;;
-  vpn_profile_create) vpn_profile_save "$VPN_PROFILE_NAME" "$VPN_PROFILE_MODE" "$VPN_PROFILE_IFACE" "$VPN_PROFILE_DESC"; exit 0;;
-  vpn_profile_delete) vpn_profile_delete "$VPN_PROFILE_NAME"; exit 0;;
-  vpn_profile_activate) vpn_profile_activate "$VPN_PROFILE_NAME"; exit 0;;
-  vpn_profile_test) vpn_profile_benchmark "$VPN_PROFILE_NAME"; exit 0;;
-  vpn_profile_benchmark) if [ -n "$VPN_PROFILE_NAME" ]; then vpn_profile_benchmark "$VPN_PROFILE_NAME"; else vpn_profile_benchmark_all; fi; exit $?;;
-  vpn_profile_auto) vpn_profile_auto_select; exit 0;;
-  vpn_monitor_status) vpn_monitor_status; exit 0;;
-  vpn_monitor_enable) vpn_monitor_enable; exit 0;;
-  vpn_monitor_disable) vpn_monitor_disable; exit 0;;
-  vpn_monitor_run) vpn_monitor_run; exit $?;;
-  adaptive_auto) adaptive_controller_run; exit $?;;
-  adaptive_status) adaptive_status; exit 0;;
-  resource_policy) resource_policy_plan; resource_policy_status; exit 0;;
-  resource_update) resource_matrix_init; resource_matrix_remote_update && log "Resource lists updated" || die "Failed to update allow-domains"; exit 0;;
-  resource_strategy_status) resource_strategy_status; exit 0;;
-  resource_benchmark) resource_benchmark_run; exit $?;;
-  resource_benchmark_status) resource_benchmark_status; exit 0;;
-  service_benchmark) service_benchmark_run; exit $?;;
-  service_benchmark_status) service_benchmark_status; exit 0;;
-  service_policy_status) service_policy_status; exit 0;;
-  zapret_sources_update) zapret_source_update; exit $?;;
-  zapret_strategy_status) zapret_source_status; exit 0;;
-  tg_proxy_status) tg_proxy_load; log "Telegram SOCKS5: enabled=$TG_ENABLED host=${TG_HOST:-unset} port=${TG_PORT:-unset} configured=$(tg_proxy_configured && echo yes || echo no)"; exit 0;;
-  tg_proxy_enable) tg_proxy_apply; exit $?;;
-  tg_proxy_disable) tg_proxy_disable; exit 0;;
-  predictive_auto) predictive_auto; exit $?;;
-  device_discover) device_discover; exit $?;;
-  device_benchmark) device_benchmark; exit $?;;
-  device_status) device_status; exit $?;;
-  device_profile) device_set_profile "$DEVICE_IP" "$DEVICE_PROF"; exit $?;;
-  predictive_status) predictive_status; exit 0;;
-  plan) exit 0;;
-  health) health; exit 0;;
-  autotest) runtime_baseline; exit 0;;
-  discover) build_resource_list; printf "\nAutomatic resource candidates:\n"; cat "$RESOURCE_RESULTS"; exit 0;;
-  benchmark) append_strategy_history; benchmark_resources manual; cat "$BASE/strategy-history.tsv"; exit 0;;
-  optimize) auto_optimize; log "OPTIMIZE: profile=$PROFILE_RESOLVED module=$MODULE_RESOLVED reason=$REASON"; exit 0;;
-  install)
-    [ "$(id -u 2>/dev/null || echo 1)" = 0 ] || die 'root required'
-    [ "$ASSUME_YES" = 1 ] || log 'Use -y for unattended installation; continuing interactively.'
-    auto_optimize
-    backup
-    runtime_baseline
-    fetch_backend
-    ROOT="$(cat "$BASE/BACKEND_ROOT")"
-    run_selected_modules
-    RC=$?
-    health
-    post_install_test
-    [ "$RC" = 0 ] || die "installation/module operation failed with status $RC"
-    log "Done. Module=$MODULE Log=$LOG"
-    ;;
-esac
 
 # ---------- device-aware benchmark ----------
 DEVICE_DIR='/etc/universal-openwrt/device-aware'
@@ -2075,3 +2013,276 @@ device_set_profile(){
   device_init; IP="$1"; PROF="$2"; [ -n "$IP" ] && [ -n "$PROF" ] || return 2
   awk -F '\t' -v ip="$IP" -v p="$PROF" 'BEGIN{OFS="\t"} NR==1{print;next} $1==ip{$4=p;$5="manual";$6=100} {print}' "$DEVICE_CLIENTS" >"$DEVICE_CLIENTS.tmp" && mv "$DEVICE_CLIENTS.tmp" "$DEVICE_CLIENTS"
 }
+
+usage(){ cat <<USAGE
+Universal OpenWrt v$VERSION
+  --diagnose     detect system and capabilities
+  --plan         show what would be enabled (default)
+  --matrix       show live compatibility matrix
+  --dry-run      do not change anything
+  --install      backup + install selected backend/modules + health check
+  --backend-url URL      opt-in external backend archive URL (requires SHA256)
+  --backend-sha256 HASH  SHA256 for the opt-in external backend archive
+  --health       run health check
+  --autotest     run baseline/runtime connectivity tests only
+  --verify       run connectivity + regression verification suite
+  --rpc-smoke    run safe read-only ubus RPC contract smoke tests
+  --optimize     calculate adaptive profile/module policy without changes
+  --discover     build and measure automatic blocked/slow resource list
+  --benchmark    benchmark reachable resources and strategy candidates
+  --rollback     restore latest UCI/sysupgrade backup
+  --install-luci install the bundled LuCI interface
+  --profile NAME auto|minimal|dns|full
+  --module NAME auto|core|doh-unpoison|malw-hosts|dpi-desync|awg-warp|podkop|proxy|all
+  --vpn-mode MODE split|full|off (AWG routing mode; default split)
+  --awg-status    show AWG/WARP registration/tunnel status
+  --awg-auto      install ABI-matched AWG packages + register WARP + generate config
+  --vpn-profiles  list saved AWG/WARP profiles
+  --vpn-profile-create NAME MODE [IFACE] [DESC]
+  --vpn-profile-delete NAME
+  --vpn-profile-activate NAME
+  --vpn-profile-test NAME
+  --vpn-profile-benchmark [NAME]  benchmark one/all saved profiles
+  --vpn-profile-auto    benchmark and choose the best saved profile
+  --vpn-monitor-status  show continuous VPN monitor status
+  --vpn-monitor-enable  enable automatic VPN failover/recovery monitor
+  --vpn-monitor-disable disable automatic VPN failover/recovery monitor
+  --vpn-monitor-run     run one low-load monitor cycle
+  --adaptive-auto       benchmark DPI/DNS/AWG/Podkop/Proxy strategies and activate the best
+  --adaptive-status     show adaptive strategy controller state/history
+  --resource-policy     show resource-specific strategy matrix
+  --resource-update     refresh candidate domains from itdoginfo/allow-domains
+  --resource-strategy-status show per-resource strategy candidates
+  --resource-benchmark  benchmark strategies separately for each problematic resource
+  --resource-benchmark-status show latest per-resource benchmark results
+  --service-benchmark      benchmark service groups
+  --service-benchmark-status show latest service-group benchmark results
+  --service-policy-status   show service policy
+  --zapret-sources-update refresh StressOzz Zapret/YouTube strategy sources
+  --zapret-strategy-status show imported Zapret strategy source status
+  --tg-proxy-status      show Telegram external SOCKS5 policy status
+  --tg-proxy-enable      activate Telegram -> external SOCKS5 policy from config
+  --tg-proxy-disable     disable Telegram external SOCKS5 policy
+  --tg-socks5-status     show local TG SOCKS5/WS bridge status
+  --tg-socks5-install    install/update local TG SOCKS5/WS bridge
+  --tg-socks5-enable     enable local TG SOCKS5/WS bridge
+  --tg-socks5-disable    disable local TG SOCKS5/WS bridge
+  --tg-ws-status        show Telegram MTProto WebSocket backend status
+  --tg-ws-enable        start Telegram MTProto WebSocket backend
+  --tg-ws-disable       stop Telegram MTProto WebSocket backend
+  --tg-failover-status   show unified Telegram failover state
+  --tg-failover-run      apply Telegram failover policy (auto by default)
+  --predictive-auto     diagnose resource failure type and run predictive adaptive recovery
+  --device-discover     discover LAN clients and infer device profiles
+  --device-benchmark    build device-aware per-client service policy
+  --device-status       show device inventory and policies
+  --device-profile IP PROFILE  force a client profile (ios/android/windows/tv/gaming/generic)
+  --version          show installed version
+  --self-check       run lightweight local dependency/integrity checks
+  --self-update URL SHA256  replace this script after SHA256 verification
+  --predictive-status   show predictive controller state/history
+  --speed MODE quick|standard|deep|auto
+  -y             non-interactive
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --diagnose) MODE=diagnose
+VPN_PROFILE_NAME=""
+VPN_PROFILE_MODE="";;
+    --plan) MODE=plan;;
+    --matrix) MODE=matrix;;
+    --dry-run) DRY=1; MODE=install;;
+    --install) MODE=install;;
+    --backend-url) shift; BACKEND_URL="${1:-}";;
+    --backend-sha256) shift; BACKEND_SHA256="${1:-}";;
+    --health) MODE=health;;
+    --autotest) MODE=autotest;;
+    --verify) MODE=verify;;
+    --rpc-smoke) MODE=rpc_smoke;;
+    --discover) MODE=discover;;
+    --benchmark) MODE=benchmark;;
+    --optimize) MODE=optimize;;
+    --rollback) MODE=rollback;;
+    --install-luci) MODE=install_luci;;
+    --profile) shift; PROFILE="${1:-auto}";;
+    --module) shift; MODULE="${1:-core}";;
+    --speed) shift; SPEED="${1:-standard}";;
+    --speed=*) SPEED="${1#*=}";;
+    --vpn-mode) shift; VPN_MODE="${1:-split}";;
+    --vpn-mode=*) VPN_MODE="${1#*=}";;
+    --awg-status) MODE=awg_status;;
+    --awg-auto) MODE=awg_auto;;
+    --vpn-profiles) MODE=vpn_profiles;;
+    --vpn-profile-create) MODE=vpn_profile_create; shift; VPN_PROFILE_NAME="${1:-}"; shift; VPN_PROFILE_MODE="${1:-}"; shift; VPN_PROFILE_IFACE="${1:-awg10}"; shift; VPN_PROFILE_DESC="${1:-AWG/WARP profile}";;
+    --vpn-profile-delete) MODE=vpn_profile_delete; shift; VPN_PROFILE_NAME="${1:-}";;
+    --vpn-profile-activate) MODE=vpn_profile_activate; shift; VPN_PROFILE_NAME="${1:-}";;
+    --vpn-profile-test) MODE=vpn_profile_test; shift; VPN_PROFILE_NAME="${1:-}";;
+    --vpn-profile-benchmark) MODE=vpn_profile_benchmark; shift; VPN_PROFILE_NAME="${1:-}";;
+    --vpn-profile-auto) MODE=vpn_profile_auto;;
+    --vpn-monitor-status) MODE=vpn_monitor_status;;
+    --vpn-monitor-enable) MODE=vpn_monitor_enable;;
+    --vpn-monitor-disable) MODE=vpn_monitor_disable;;
+    --vpn-monitor-run) MODE=vpn_monitor_run;;
+    --adaptive-auto) MODE=adaptive_auto;;
+    --adaptive-status) MODE=adaptive_status;;
+    --resource-policy) MODE=resource_policy;;
+    --resource-update) MODE=resource_update;;
+    --resource-strategy-status) MODE=resource_strategy_status;;
+    --resource-benchmark) MODE=resource_benchmark;;
+    --resource-benchmark-status) MODE=resource_benchmark_status;;
+    --service-benchmark) MODE=service_benchmark;;
+    --service-benchmark-status) MODE=service_benchmark_status;;
+    --service-policy-status) MODE=service_policy_status;;
+    --zapret-sources-update) MODE=zapret_sources_update;;
+    --zapret-strategy-status) MODE=zapret_strategy_status;;
+    --tg-proxy-status) MODE=tg_proxy_status;;
+    --tg-proxy-enable) MODE=tg_proxy_enable;;
+    --tg-proxy-disable) MODE=tg_proxy_disable;;
+    --tg-socks5-status) MODE=tg_socks5_status;;
+    --tg-socks5-install) MODE=tg_socks5_install;;
+    --tg-socks5-enable) MODE=tg_socks5_enable;;
+    --tg-socks5-disable) MODE=tg_socks5_disable;;
+    --tg-ws-status) MODE=tg_ws_status;;
+    --tg-ws-enable) MODE=tg_ws_enable;;
+    --tg-ws-disable) MODE=tg_ws_disable;;
+    --tg-failover-status) MODE=tg_failover_status;;
+    --tg-failover-run) MODE=tg_failover_run;;
+    --predictive-auto) MODE=predictive_auto;;
+    --device-discover) MODE=device_discover;;
+    --device-benchmark) MODE=device_benchmark;;
+    --device-status) MODE=device_status;;
+    --device-profile) MODE=device_profile; DEVICE_IP="${2:-}"; DEVICE_PROF="${3:-}"; shift 2;;
+    --version) printf '%s\n' "Universal OpenWrt v$VERSION"; exit 0;;
+    --self-check) MODE=self_check;;
+    --self-update) SELF_UPDATE_URL="${2:-}"; SELF_UPDATE_SHA256="${3:-}"; [ -n "$SELF_UPDATE_URL" ] || die 'URL required for --self-update'; [ -n "$SELF_UPDATE_SHA256" ] || die 'SHA256 required for --self-update'; shift 2;;
+    --predictive-status) MODE=predictive_status;;
+    --strategy-plan) MODE=strategy_plan;;
+    --strategy-status) MODE=strategy_status;;
+    --tunnel-status) MODE=tunnel_status;;
+    --tunnel-profiles) MODE=tunnel_profiles;;
+    --tunnel-profile-create) MODE=tunnel_profile_create; TUNNEL_NAME="${2:-}"; TUNNEL_ADDRESS="${3:-}"; TUNNEL_PORT="${4:-443}"; TUNNEL_UUID="${5:-}"; TUNNEL_SERVERNAME="${6:-}"; shift 5;;
+    --tunnel-profile-delete) MODE=tunnel_profile_delete; TUNNEL_NAME="${2:-}"; shift;;
+    --tunnel-enable) MODE=tunnel_enable; TUNNEL_NAME="${2:-}"; shift;;
+    --tunnel-disable) MODE=tunnel_disable;;
+    --tunnel-auto) MODE=tunnel_auto;;
+    -y) ASSUME_YES=1;;
+    -h|--help) usage; exit 0;;
+    *) die "unknown option: $1";;
+  esac
+  shift
+done
+
+validate_speed
+validate_vpn_mode
+if [ -n "${SELF_UPDATE_URL:-}" ]; then
+  TMP_UPDATE="/tmp/universal-openwrt-update.$$"
+  if have uclient-fetch; then uclient-fetch -q -O "$TMP_UPDATE" "$SELF_UPDATE_URL"; elif have wget; then wget -q -O "$TMP_UPDATE" "$SELF_UPDATE_URL"; elif have curl; then curl -fsSL -o "$TMP_UPDATE" "$SELF_UPDATE_URL"; else die "No downloader available"; fi
+  [ -s "$TMP_UPDATE" ] || die "Downloaded update is empty"
+  have sha256sum || die "sha256sum required for --self-update"
+  printf '%s  %s\n' "$SELF_UPDATE_SHA256" "$TMP_UPDATE" | sha256sum -c - >/dev/null 2>&1 || die "SHA256 verification failed"
+  chmod 0755 "$TMP_UPDATE"
+  sh -n "$TMP_UPDATE" || die "Downloaded update failed shell syntax check"
+  install -m 0755 "$TMP_UPDATE" "$0.new" 2>/dev/null || cp "$TMP_UPDATE" "$0.new"
+  mv "$0.new" "$0"
+  rm -f "$TMP_UPDATE"
+  exec "$0" --version
+fi
+case "$MODE" in
+  tg_ws_status) tgws_status; exit $?;;
+  tg_proxy_status) tg_proxy_load; printf 'Telegram SOCKS5: enabled=%s host=%s port=%s configured=%s\n' "$TG_ENABLED" "${TG_HOST:-unset}" "${TG_PORT:-unset}" "$(tg_proxy_configured && echo yes || echo no)"; exit 0;;
+  tg_failover_status) tg_failover_status; exit $?;;
+  tg_socks5_status) tggo_status; exit $?;;
+  tg_socks5_install) tggo_install; exit $?;;
+  tg_socks5_enable) tggo_enable; exit $?;;
+  tg_socks5_disable) tggo_disable; exit 0;;
+  strategy_plan) se_plan; exit $?;;
+  strategy_status) se_status; exit $?;;
+  tunnel_status) te_status; exit $?;;
+  tunnel_profiles) te_profile_list; exit $?;;
+  tunnel_profile_create) te_profile_create "$TUNNEL_NAME" "$TUNNEL_ADDRESS" "$TUNNEL_PORT" "$TUNNEL_UUID" "$TUNNEL_SERVERNAME"; exit $?;;
+  tunnel_profile_delete) te_profile_delete "$TUNNEL_NAME"; exit $?;;
+  tunnel_enable) te_enable "$TUNNEL_NAME"; exit $?;;
+  tunnel_disable) te_disable; exit 0;;
+  tunnel_auto) te_auto_select; exit $?;;
+  *) log "Universal OpenWrt v$VERSION (speed=$SPEED)";;
+esac
+case "$MODE" in
+  self_check)
+    detect
+    require_supported_platform
+    printf 'version=%s\npackage_manager=%s\nfirewall=%s\narch=%s\nkernel=%s\nram_kb=%s\nfree_root_kb=%s\n' "$VERSION" "$PM" "$FW" "$ARCH" "$KERNEL" "$RAM_KB" "$FREE_KB"
+    for x in uci ubus jsonfilter ip awk sed grep; do have "$x" && printf 'tool.%s=ok\n' "$x" || printf 'tool.%s=missing\n' "$x"; done
+    exit 0;;
+  install_luci) install_luci; exit 0;;
+  rollback) rollback;;
+  *) detect; require_supported_platform; show; plan;;
+esac
+
+awg_auto(){ VPN_MODE=split; AWG_IFACE=awg10; awg_auto_setup; }
+
+case "$MODE" in
+  diagnose) exit 0;;
+  matrix) matrix; exit 0;;
+  awg_status) awg_registration_status; exit 0;;
+  awg_auto) awg_auto; exit $?;;
+  vpn_profiles) vpn_profile_list; exit 0;;
+  vpn_profile_create) vpn_profile_save "$VPN_PROFILE_NAME" "$VPN_PROFILE_MODE" "$VPN_PROFILE_IFACE" "$VPN_PROFILE_DESC"; exit 0;;
+  vpn_profile_delete) vpn_profile_delete "$VPN_PROFILE_NAME"; exit 0;;
+  vpn_profile_activate) vpn_profile_activate "$VPN_PROFILE_NAME"; exit 0;;
+  vpn_profile_test) vpn_profile_benchmark "$VPN_PROFILE_NAME"; exit 0;;
+  vpn_profile_benchmark) if [ -n "$VPN_PROFILE_NAME" ]; then vpn_profile_benchmark "$VPN_PROFILE_NAME"; else vpn_profile_benchmark_all; fi; exit $?;;
+  vpn_profile_auto) vpn_profile_auto_select; exit 0;;
+  vpn_monitor_status) vpn_monitor_status; exit 0;;
+  vpn_monitor_enable) vpn_monitor_enable; exit 0;;
+  vpn_monitor_disable) vpn_monitor_disable; exit 0;;
+  vpn_monitor_run) vpn_monitor_run; exit $?;;
+  adaptive_auto) adaptive_controller_run; exit $?;;
+  adaptive_status) adaptive_status; exit 0;;
+  resource_policy) resource_policy_plan; resource_policy_status; exit 0;;
+  resource_update) resource_matrix_init; resource_matrix_remote_update && log "Resource lists updated" || die "Failed to update allow-domains"; exit 0;;
+  resource_strategy_status) resource_strategy_status; exit 0;;
+  resource_benchmark) resource_benchmark_run; exit $?;;
+  resource_benchmark_status) resource_benchmark_status; exit 0;;
+  service_benchmark) service_benchmark_run; exit $?;;
+  service_benchmark_status) service_benchmark_status; exit 0;;
+  service_policy_status) service_policy_status; exit 0;;
+  zapret_sources_update) zapret_source_update; exit $?;;
+  zapret_strategy_status) zapret_source_status; exit 0;;
+  tg_proxy_enable) tg_proxy_apply; exit $?;;
+  tg_proxy_disable) tg_proxy_disable; exit 0;;
+  tg_ws_enable) tgws_enable; exit $?;;
+  tg_ws_disable) tgws_disable; exit 0;;
+  tg_failover_status) tg_failover_status; exit 0;;
+  tg_failover_run) tg_failover_apply; exit $?;;
+  predictive_auto) predictive_auto; exit $?;;
+  device_discover) device_discover; exit $?;;
+  device_benchmark) device_benchmark; exit $?;;
+  device_status) device_status; exit $?;;
+  device_profile) device_set_profile "$DEVICE_IP" "$DEVICE_PROF"; exit $?;;
+  predictive_status) predictive_status; exit 0;;
+  verify) verify; exit $?;;
+  rpc_smoke) rpc_smoke; exit $?;;
+  plan) exit 0;;
+  health) health; exit 0;;
+  autotest) runtime_baseline; exit 0;;
+  discover) build_resource_list; printf "\nAutomatic resource candidates:\n"; cat "$RESOURCE_RESULTS"; exit 0;;
+  benchmark) append_strategy_history; benchmark_resources manual; cat "$BASE/strategy-history.tsv"; exit 0;;
+  optimize) auto_optimize; log "OPTIMIZE: profile=$PROFILE_RESOLVED module=$MODULE_RESOLVED reason=$REASON"; exit 0;;
+  install)
+    [ "$(id -u 2>/dev/null || echo 1)" = 0 ] || die 'root required'
+    [ "$ASSUME_YES" = 1 ] || log 'Use -y for unattended installation; continuing interactively.'
+    auto_optimize
+    backup
+    runtime_baseline
+    fetch_backend
+    ROOT="$(cat "$BASE/BACKEND_ROOT")"
+    run_selected_modules
+    RC=$?
+    health
+    post_install_test
+    [ "$RC" = 0 ] || die "installation/module operation failed with status $RC"
+    log "Done. Module=$MODULE Log=$LOG"
+    ;;
+esac

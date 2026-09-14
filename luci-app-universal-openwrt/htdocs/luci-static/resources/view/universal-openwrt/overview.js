@@ -34,6 +34,24 @@ const resourceRefresh=resourceUpdate;
 const tgStatus=tgProxyStatus;
 const tgEnable=tgProxyEnable;
 const tgDisable=tgProxyDisable;
+const tgWsStatus=rpc.declare({object:'universal_openwrt',method:'tg_ws_status',params:[]});
+const tgWsEnable=rpc.declare({object:'universal_openwrt',method:'tg_ws_enable',params:['confirm']});
+const tgWsDisable=rpc.declare({object:'universal_openwrt',method:'tg_ws_disable',params:['confirm']});
+const tgSocks5Status=rpc.declare({object:'universal_openwrt',method:'tg_socks5_status',params:[]});
+const tgSocks5Install=rpc.declare({object:'universal_openwrt',method:'tg_socks5_install',params:[]});
+const tgSocks5Enable=rpc.declare({object:'universal_openwrt',method:'tg_socks5_enable',params:['confirm']});
+const tgSocks5Disable=rpc.declare({object:'universal_openwrt',method:'tg_socks5_disable',params:['confirm']});
+const tgFailoverStatus=rpc.declare({object:'universal_openwrt',method:'tg_failover_status',params:[]});
+const tgFailoverRun=rpc.declare({object:'universal_openwrt',method:'tg_failover_run',params:['confirm']});
+const strategyPlan=rpc.declare({object:'universal_openwrt',method:'strategy_plan',params:[]});
+const strategyStatus=rpc.declare({object:'universal_openwrt',method:'strategy_status',params:[]});
+const tunnelStatus=rpc.declare({object:'universal_openwrt',method:'tunnel_status',params:[]});
+const tunnelProfiles=rpc.declare({object:'universal_openwrt',method:'tunnel_profiles',params:[]});
+const tunnelCreate=rpc.declare({object:'universal_openwrt',method:'tunnel_profile_create',params:['name','address','port','uuid','servername']});
+const tunnelDelete=rpc.declare({object:'universal_openwrt',method:'tunnel_profile_delete',params:['name','confirm']});
+const tunnelEnable=rpc.declare({object:'universal_openwrt',method:'tunnel_enable',params:['name']});
+const tunnelDisable=rpc.declare({object:'universal_openwrt',method:'tunnel_disable',params:[]});
+const tunnelAuto=rpc.declare({object:'universal_openwrt',method:'tunnel_auto',params:['confirm']});
 function out(title,text){return E('div',{'class':'cbi-section'},[E('h3',{},title),E('pre',{'style':'white-space:pre-wrap;max-height:420px;overflow:auto'},text||'—')]);}
 function modal(title,text){ui.showModal(title,[E('pre',{'style':'white-space:pre-wrap;max-height:70vh;overflow:auto'},text||'—'),E('button',{'class':'btn cbi-button','click':ui.hideModal},'Закрыть')]);}
 return view.extend({load:()=>Promise.all([status(),matrix(),logs(),awgStatus()]),render:function(d){
@@ -64,14 +82,14 @@ return view.extend({load:()=>Promise.all([status(),matrix(),logs(),awgStatus()])
    function adaptiveState(){return adaptiveStatus().then(r=>modal('Состояние адаптивного контроллера',r?.output||r?.error||''));}
    function predictive(){if(!confirm('Запустить предиктивный анализ проблемных ресурсов и автоматическое восстановление?'))return;return predictiveAuto(true).then(r=>modal('Предиктивный контроллер',r?.output||r?.error||''));}
    function predictiveState(){return predictiveStatus().then(r=>modal('История предиктивного контроллера',r?.output||r?.error||''));}
-   root.appendChild(E('div',{'class':'cbi-section'},[E('h3',{},'VPN-профили AWG/WARP'),E('div',{'style':'display:flex;gap:8px;flex-wrap:wrap;align-items:center'},[name,mode,iface,btn('Создать профиль',create),btn('Активировать',activate),btn('Тест профиля',testProfile),btn('Сравнить все',bench),btn('Автовыбор лучшего',autoPick,'cbi-button-positive'),btn('Адаптивный подбор стратегий',adaptive,'cbi-button-positive'),btn('Состояние стратегий',adaptiveState),btn('Предиктивный анализ',predictive,'cbi-button-positive'),btn('История предиктива',predictiveState),btn('Матрица ресурсов',resourcePolicy),btn('Обновить список ресурсов',resourceRefresh),btn('Telegram SOCKS5',tgStatus),btn('Включить Telegram proxy',tgEnable,'cbi-button-positive'),btn('Отключить Telegram proxy',tgDisable,'cbi-button-negative')]),box]));
+   root.appendChild(E('div',{'class':'cbi-section'},[E('h3',{},'VPN-профили AWG/WARP'),E('div',{'style':'display:flex;gap:8px;flex-wrap:wrap;align-items:center'},[name,mode,iface,btn('Создать профиль',create),btn('Активировать',activate),btn('Тест профиля',testProfile),btn('Сравнить все',bench),btn('Автовыбор лучшего',autoPick,'cbi-button-positive'),btn('Адаптивный подбор стратегий',adaptive,'cbi-button-positive'),btn('Состояние стратегий',adaptiveState),btn('Предиктивный анализ',predictive,'cbi-button-positive'),btn('История предиктива',predictiveState),btn('Матрица ресурсов',resourcePolicy),btn('Обновить список ресурсов',resourceRefresh),btn('Внешний SOCKS5',tgStatus),btn('Включить внешний proxy',tgEnable,'cbi-button-positive'),btn('TG SOCKS5 Go',tgSocks5Status),btn('Установить TG SOCKS5',()=>tgSocks5Install().then(r=>modal('TG SOCKS5 Go',r?.output||r?.error||'')),'cbi-button-positive'),btn('Включить TG SOCKS5',()=>tgSocks5Enable({confirm:true}).then(r=>modal('TG SOCKS5 Go',r?.output||r?.error||'')),'cbi-button-positive'),btn('Отключить TG SOCKS5',()=>tgSocks5Disable({confirm:true}).then(r=>modal('TG SOCKS5 Go',r?.output||r?.error||'')),'cbi-button-negative'),btn('Отключить Telegram proxy',tgDisable,'cbi-button-negative'),btn('TG WS status',tgWsStatus),btn('Включить TG WS',()=>tgWsEnable({confirm:true}),'cbi-button-positive'),btn('Отключить TG WS',()=>tgWsDisable({confirm:true}),'cbi-button-negative'),btn('TG failover status',()=>tgFailoverStatus().then(r=>modal('Telegram failover',r?.output||r?.error||''))),btn('Автовыбор Telegram',()=>{if(!confirm('Автоматически выбрать рабочий Telegram backend?'))return;return tgFailoverRun({confirm:true}).then(r=>modal('Telegram failover',r?.output||r?.error||''));},'cbi-button-positive')]),box]));
    refreshProfiles();
  }
  renderProfiles();
 
  root.appendChild(out('AWG / WARP',aw));
  root.appendChild(E('div',{'class':'cbi-section'},[E('h3',{},'Управление'),E('div',{'style':'display:flex;gap:8px;flex-wrap:wrap;align-items:center'},[E('label',{},['Скорость тестирования: ',speed]),E('label',{},['VPN: ',vpn]),sel,btn('Установить / применить',doInstall,'cbi-button-positive'),btn('Проверить AWG',()=>awgStatus().then(r=>modal('AWG / WARP',r?.output||r?.error||''))),btn('Проверить соединение',()=>test().then(refresh)),btn('Автопоиск проблемных ресурсов',doDiscover),btn('Подобрать стратегию',doOptimize),btn('Бенчмарк методов',()=>benchmark(speed.value).then(r=>modal('Рейтинг стратегий',r?.output||r?.error||''))),btn('Глубокая проверка',()=>verify().then(r=>modal('Проверка',r?.output||r?.error||''))),btn('Обновить',refresh),btn('Откат',doRollback,'cbi-button-negative')]) ]));
- root.appendChild(out('Матрица совместимости',mx));root.appendChild(out('Журнал',lg));
+ root.appendChild(E('div',{'class':'cbi-section'},[E('h3',{},'Tunnel Engine — VLESS / sing-box / TProxy / FakeIP'),E('p',{'class':'cbi-section-descr'},'Открытая реализация архитектуры ZeroBlock: профиль VLESS, sing-box и безопасное управление владельцами правил. Закрытый ZeroBlock бинарник не устанавливается.'),E('div',{'style':'display:flex;gap:8px;flex-wrap:wrap;align-items:center'},[btn('Статус туннеля',()=>tunnelStatus().then(r=>modal('Tunnel Engine',r?.output||r?.error||''))),btn('Профили',()=>tunnelProfiles().then(r=>modal('VLESS профили',r?.output||r?.error||''))),btn('План стратегий',()=>strategyPlan().then(r=>modal('Strategy Engine',r?.output||r?.error||''))),btn('Состояние владельцев',()=>strategyStatus().then(r=>modal('Strategy ownership',r?.output||r?.error||''))),btn('Подготовить первый VLESS-профиль',()=>{if(!confirm('Подготовить первый настроенный VLESS-профиль?'))return;return tunnelAuto(true).then(r=>modal('Tunnel Engine',r?.output||r?.error||''));},'cbi-button-positive'),btn('Отключить туннель',()=>tunnelDisable().then(r=>modal('Tunnel Engine',r?.output||r?.error||'')),'cbi-button-negative')])]));
  root.appendChild(E('p',{'class':'cbi-section-descr'},'AWG auto автоматически подбирает пакет kmod/tools под версию OpenWrt и kernel ABI, регистрирует WARP-конфигурацию через backend-генераторы и настраивает интерфейс. Full переводит LAN-трафик в туннель; Split не меняет default route. При ошибке проверки конфигурация откатывается. Не передавайте в панель публичные VPN-ключи из непроверенных источников.'));
  return root;
 }});
