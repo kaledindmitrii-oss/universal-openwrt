@@ -1,8 +1,0 @@
-{
-  "admin/services/universal-openwrt": {
-    "title": "Universal OpenWrt",
-    "order": 35,
-    "action": { "type": "view", "path": "universal-openwrt/overview" },
-    "depends": { "acl": [ "luci-app-universal-openwrt" ] }
-  }
-}
