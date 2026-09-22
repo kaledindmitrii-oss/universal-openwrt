@@ -1,0 +1,74 @@
+{
+  "luci-app-universal-openwrt": {
+    "description": "Universal OpenWrt manager",
+    "read": {
+      "ubus": {
+        "universal_openwrt": [
+          "status",
+          "matrix",
+          "verify",
+          "discover",
+          "optimize",
+          "benchmark",
+          "test",
+          "logs",
+          "awg_status",
+          "vpn_profiles",
+          "vpn_profile_test",
+          "vpn_profile_benchmark",
+          "vpn_monitor_status",
+          "vpn_monitor_run",
+          "adaptive_status",
+          "predictive_status",
+          "resource_policy",
+          "device_status",
+          "device_discover",
+          "device_benchmark",
+          "service_benchmark",
+          "service_policy",
+          "version",
+          "self_check",
+          "tg_proxy_status",
+          "strategy_plan",
+          "strategy_status",
+          "tunnel_status",
+          "tunnel_profiles",
+          "tg_ws_status",
+          "tg_socks5_status",
+          "tg_failover_status"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "universal_openwrt": [
+          "install",
+          "rollback",
+          "vpn_profile_create",
+          "vpn_profile_delete",
+          "vpn_profile_activate",
+          "vpn_profile_auto",
+          "vpn_monitor_enable",
+          "vpn_monitor_disable",
+          "adaptive_auto",
+          "predictive_auto",
+          "resource_update",
+          "device_profile",
+          "tg_proxy_enable",
+          "tg_proxy_disable",
+          "tg_ws_enable",
+          "tg_ws_disable",
+          "tg_socks5_install",
+          "tg_socks5_enable",
+          "tg_socks5_disable",
+          "tunnel_profile_create",
+          "tunnel_profile_delete",
+          "tunnel_enable",
+          "tunnel_disable",
+          "tunnel_auto",
+          "tg_failover_run"
+        ]
+      }
+    }
+  }
+}
