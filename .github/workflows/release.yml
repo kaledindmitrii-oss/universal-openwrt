@@ -9,17 +9,43 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Package
+      - name: Validate release tag
         run: |
           VERSION="$(cat VERSION)"
-          mkdir -p dist/universal-openwrt-v${VERSION}
-          cp -R src installer luci-app-universal-openwrt packaging resources docs .github README.md LICENSE VERSION dist/universal-openwrt-v${VERSION}/
+          test "$VERSION" = "${GITHUB_REF_NAME#v}" || { echo "VERSION ($VERSION) does not match tag ($GITHUB_REF_NAME)"; exit 1; }
+      - name: Build and validate assets
+        run: |
+          python3 tools/build-assets.py
+          ./tests/platform_scope.sh
+          ./tests/release_integrity.sh
+      - name: Package release bundle
+        run: |
+          VERSION="$(cat VERSION)"
+          mkdir -p "dist/universal-openwrt-v${VERSION}"
+          cp -R src installer modules luci-app-universal-openwrt packaging resources assets tools docs tests .github README.md LICENSE VERSION CHANGELOG.md install-luci.sh push-to-github.cmd push-to-github.ps1 release-manifest.json dist/universal-openwrt-v${VERSION}/
+          cp assets/ipk/*.ipk assets/apk/*.apk release-manifest.json dist/
           tar -C dist -czf "dist/universal-openwrt-v${VERSION}.tar.gz" "universal-openwrt-v${VERSION}"
-          (cd dist && sha256sum "universal-openwrt-v${VERSION}.tar.gz" > SHA256SUMS)
-      - name: Publish
+          (cd dist && zip -qr "universal-openwrt-v${VERSION}.zip" "universal-openwrt-v${VERSION}")
+          python3 tools/build-release-manifest.py
+          cp release-manifest.json dist/release-manifest.json
+          (cd dist && sha256sum "universal-openwrt-v${VERSION}.tar.gz" "universal-openwrt-v${VERSION}.zip" *.ipk *.apk release-manifest.json > SHA256SUMS)
+          python3 - <<'PY'
+import json,hashlib
+from pathlib import Path
+p=Path('dist/release-manifest.json'); r=json.loads(p.read_text())
+for a in r['assets']:
+    f=Path('dist')/a['file']
+    assert f.is_file() and f.stat().st_size == a['bytes'] and hashlib.sha256(f.read_bytes()).hexdigest() == a['sha256'], a
+PY
+          ./tests/release_assets.sh
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.tar.gz
+            dist/*.zip
             dist/SHA256SUMS
+            dist/release-manifest.json
+            dist/*.ipk
+            dist/*.apk
           generate_release_notes: true

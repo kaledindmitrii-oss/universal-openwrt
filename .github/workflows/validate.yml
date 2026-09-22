@@ -20,6 +20,24 @@ jobs:
           test -x installer/install.sh
           test -f luci-app-universal-openwrt/Makefile
           test -f VERSION
+          test -f assets/ipk/manifest.json
+          test -f assets/apk/manifest.json
+          python3 -m py_compile tools/build-assets.py
+          jq empty luci-app-universal-openwrt/root/usr/share/rpcd/acl.d/luci-app-universal-openwrt.json
+      - name: Installer smoke
+        run: |
+          set -eu
+          sh -n installer/install.sh
+          sh -n install-luci.sh
+          ./tests/platform_scope.sh
+          ./tests/smoke.sh
+          ./tests/strategy_contract.sh
+          ./tests/tg_strategy.sh
+          ./tests/interface_strategy_regression.sh
+          python3 tools/build-assets.py
+          ./tests/release_integrity.sh
+          test -s assets/ipk/universal-openwrt_$(cat VERSION)-1_all.ipk
+          test -s assets/apk/universal-openwrt-$(cat VERSION)-r1.apk
       - name: Secret scan
         run: |
           if grep -RInE '(PRIVATE_KEY|PASSWORD|TOKEN|SECRET)=.{8,}' src installer luci-app-universal-openwrt --exclude='*.md'; then echo 'Potential secret detected'; exit 1; fi
