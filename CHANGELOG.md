@@ -1,9 +1,20 @@
-# v30.2.16
+# v30.2.16 — Telegram, strategy automation and synchronization hardening
 
-- Telegram SOCKS5 now uses the same local Go `tg-ws-proxy-go` architecture as current StressOzz/Zapret-Manager, with architecture-aware release selection and SHA256 verification when GitHub release metadata provides a digest.
-- Telegram failover keeps local TG SOCKS5 as the first route, then Rust/Python WS, then external SOCKS5 policy.
-- Strategy Engine now exposes a capability registry and a single strategy application path, preventing strategy names from becoming detached from backend implementations.
-- Strategy plan now shows preferred strategy availability.
+- Reworked Telegram SOCKS5 around the local `tg-ws-proxy-go` bridge with architecture-aware release selection and SHA256 verification when upstream metadata provides a digest.
+- Separated Telegram SOCKS5, Telegram WS and external SOCKS5/TProxy semantics in runtime state, failover and LuCI.
+- Added deterministic Telegram installed/configured/running/active states and corrected failover ordering.
+- Added AWG/WARP package acquisition with target/kernel compatibility checks and transactional health-check rollback.
+- Removed TLS certificate bypasses from AWG downloads and HTTPS probes.
+- Added a strategy capability registry and unified strategy application path.
+- Added a global strategy-change lock to prevent concurrent AWG/DPI/Proxy/Tunnel configuration mutations.
+- Hardened rollback so generated AWG/Telegram/failover state is restored or removed when a candidate fails.
+- Improved learned per-resource policy selection and strategy scoring; simpler successful strategies are preferred when heavier alternatives provide no meaningful benefit.
+- Fixed DNS strategy success reporting so failed candidates cannot be reported as successful.
+- Improved backend error propagation and adaptive-controller lock cleanup.
+- Simplified LuCI around five primary actions with advanced controls kept in expandable sections.
+- Added/updated regression checks for interface, strategy contracts, Telegram state, release assets, RPC/ACL parity and platform scope.
+- Removed generated Python cache files and added repository ignore rules for runtime/secrets/build artifacts.
+- See `RELEASE_NOTES_v30.2.16.md` for the complete audit and release summary.
 
 # v30.2.15
 

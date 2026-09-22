@@ -1,15 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local build output
+/dist/
 *.log
-*.tmp
+
+# OpenWrt/runtime state
 *.swp
+*.swo
 .DS_Store
-Thumbs.db
+
+# Secrets / local configuration
 .env
 .env.*
-secrets/
-private/
 *.key
 *.pem
-*.token
-runtime/
-state/
-/etc/
+*.secret
+
+# Git metadata created by local publish helpers
+.git/

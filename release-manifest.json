@@ -72,14 +72,14 @@
     },
     {
       "file": "universal-openwrt-v30.2.16.tar.gz",
-      "bytes": 192122,
-      "sha256": "d571cba1d6b348c2531db3a61e0060936ce12b9697081093c115757479f680cc",
+      "bytes": 194657,
+      "sha256": "c90b2b3126309f9483fd08a61926c7a746d2c4b67e6230d675af6c16c140822d",
       "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-v30.2.16.tar.gz"
     },
     {
       "file": "universal-openwrt-v30.2.16.zip",
-      "bytes": 219847,
-      "sha256": "4378b86759ee268caf5db2c7de47d75f375fb6a83db53eb9b5c55d49ea954fc0",
+      "bytes": 222114,
+      "sha256": "4f9862b1579351253df0f78e611562b9072210ba94e61818ef35e6ed2a73b442",
       "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-v30.2.16.zip"
     }
   ]

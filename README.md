@@ -100,6 +100,11 @@ apk --allow-untrusted add ./luci-app-universal-openwrt-30.2.16-r1.apk
 
 OpenWrt documents the local unsigned APK form above.
 
+## Release notes
+
+- [v30.2.16 release notes](RELEASE_NOTES_v30.2.16.md)
+- [Full changelog](CHANGELOG.md)
+
 ## Security
 
 Never commit VPN private keys, SOCKS5 passwords, AWG credentials, tokens or generated runtime state. See [`docs/SECURITY.md`](docs/SECURITY.md).
