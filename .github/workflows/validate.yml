@@ -34,6 +34,7 @@ jobs:
           ./tests/strategy_contract.sh
           ./tests/tg_strategy.sh
           ./tests/interface_strategy_regression.sh
+          ./tests/runtime_hardening.sh
           python3 tools/build-assets.py
           ./tests/release_integrity.sh
           test -s assets/ipk/universal-openwrt_$(cat VERSION)-1_all.ipk

@@ -12,8 +12,8 @@
     {
       "format": "apk",
       "file": "universal-openwrt-30.2.16-r1.apk",
-      "sha256": "0d94211e8a4ab8c6b8a2d38523415ef3a7cad600771b6260a68feffc283c0f1f",
-      "bytes": 47652,
+      "sha256": "3710ed9dadbb846ee53b3133f81f2e71db4daa36a013cb6dbea3066612a8ccd9",
+      "bytes": 47924,
       "signed": false
     }
   ]

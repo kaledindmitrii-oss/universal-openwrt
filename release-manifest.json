@@ -15,8 +15,8 @@
     "opkg": {
       "file": "universal-openwrt_30.2.16-1_all.ipk",
       "path": "assets/ipk/universal-openwrt_30.2.16-1_all.ipk",
-      "bytes": 47772,
-      "sha256": "a7813b6245af2fc634c26ee3f7cb27bd4cdc8377194c9c0b1d32f314029dbd6a",
+      "bytes": 48121,
+      "sha256": "4bf62b17a32019b14cebc8b56479d13e3b485f590af2cf9b9e23cb41e4795f4b",
       "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt_30.2.16-1_all.ipk"
     },
     "opkg_luci": {
@@ -29,8 +29,8 @@
     "apk": {
       "file": "universal-openwrt-30.2.16-r1.apk",
       "path": "assets/apk/universal-openwrt-30.2.16-r1.apk",
-      "bytes": 47652,
-      "sha256": "0d94211e8a4ab8c6b8a2d38523415ef3a7cad600771b6260a68feffc283c0f1f",
+      "bytes": 47924,
+      "sha256": "3710ed9dadbb846ee53b3133f81f2e71db4daa36a013cb6dbea3066612a8ccd9",
       "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-30.2.16-r1.apk"
     },
     "apk_luci": {
@@ -52,8 +52,8 @@
     {
       "file": "universal-openwrt-30.2.16-r1.apk",
       "path": "assets/apk/universal-openwrt-30.2.16-r1.apk",
-      "bytes": 47652,
-      "sha256": "0d94211e8a4ab8c6b8a2d38523415ef3a7cad600771b6260a68feffc283c0f1f",
+      "bytes": 47924,
+      "sha256": "3710ed9dadbb846ee53b3133f81f2e71db4daa36a013cb6dbea3066612a8ccd9",
       "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-30.2.16-r1.apk"
     },
     {
@@ -66,20 +66,20 @@
     {
       "file": "universal-openwrt_30.2.16-1_all.ipk",
       "path": "assets/ipk/universal-openwrt_30.2.16-1_all.ipk",
-      "bytes": 47772,
-      "sha256": "a7813b6245af2fc634c26ee3f7cb27bd4cdc8377194c9c0b1d32f314029dbd6a",
+      "bytes": 48121,
+      "sha256": "4bf62b17a32019b14cebc8b56479d13e3b485f590af2cf9b9e23cb41e4795f4b",
       "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt_30.2.16-1_all.ipk"
     },
     {
       "file": "universal-openwrt-v30.2.16.tar.gz",
-      "bytes": 194657,
-      "sha256": "c90b2b3126309f9483fd08a61926c7a746d2c4b67e6230d675af6c16c140822d",
+      "bytes": 0,
+      "sha256": "",
       "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-v30.2.16.tar.gz"
     },
     {
       "file": "universal-openwrt-v30.2.16.zip",
-      "bytes": 222114,
-      "sha256": "4f9862b1579351253df0f78e611562b9072210ba94e61818ef35e6ed2a73b442",
+      "bytes": 0,
+      "sha256": "",
       "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-v30.2.16.zip"
     }
   ]

@@ -12,8 +12,8 @@
     {
       "format": "ipk",
       "file": "universal-openwrt_30.2.16-1_all.ipk",
-      "sha256": "a7813b6245af2fc634c26ee3f7cb27bd4cdc8377194c9c0b1d32f314029dbd6a",
-      "bytes": 47772,
+      "sha256": "4bf62b17a32019b14cebc8b56479d13e3b485f590af2cf9b9e23cb41e4795f4b",
+      "bytes": 48121,
       "signed": false
     }
   ]

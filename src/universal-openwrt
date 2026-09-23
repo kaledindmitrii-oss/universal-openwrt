@@ -25,6 +25,7 @@ TUNNEL_SERVERNAME=''
 SPEED='standard'
 VPN_MODE='split'
 RESOURCE_CACHE_TTL=600
+BASELINE_TIMES="$BASE/baseline-times.txt"
 
 mkdir -p "$BASE" 2>/dev/null || true
 UOWRT_LIB='/usr/lib/universal-openwrt'
@@ -225,7 +226,7 @@ extract_domains(){
 discover_candidates(){
   mkdir -p "$BASE"
   OUT="$CANDIDATE_FILE"
-  if command -v resource_matrix_build_candidate >/dev/null 2>&1; then resource_matrix_build_candidate "$SPEED"; [ -s "$RESOURCE_DIR/active.lst" ] && cp -f "$RESOURCE_DIR/active.lst" "$OUT"; fi
+  if command -v resource_matrix_build_candidate >/dev/null 2>&1; then resource_matrix_build_candidate "$SPEED" || return 1; fi
   CACHE="$BASE/ooni-testlist.json"
   META="$BASE/ooni-cache.ts"
   if [ ! -s "$OUT" ]; then
@@ -801,7 +802,6 @@ awg_auto_setup(){
 # ---------- AWG/WARP profile manager ----------
 VPN_PROFILES_DIR='/etc/universal-openwrt/vpn-profiles'
 VPN_PROFILE_FILE="${VPN_PROFILES_DIR}/profiles.db"
-mkdir -p "$VPN_PROFILES_DIR" 2>/dev/null || true
 vpn_profiles_init(){
   mkdir -p "$VPN_PROFILES_DIR" 2>/dev/null || return 1
   [ -f "$VPN_PROFILE_FILE" ] || : > "$VPN_PROFILE_FILE"
@@ -1064,10 +1064,16 @@ vpn_monitor_switch_best(){
 vpn_monitor_run(){
   vpn_monitor_init || return 1
   [ "$(vpn_monitor_cfg enabled)" = 1 ] || { vpn_monitor_log 'cycle skipped: disabled'; return 0; }
-  if [ -e "$VPN_MONITOR_LOCK" ]; then vpn_monitor_log 'cycle skipped: lock exists'; return 0; fi
-  printf '%s\n' "$$" > "$VPN_MONITOR_LOCK"; trap 'rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true' EXIT
-  vpn_profiles_init || return 0
-  [ -s "$VPN_PROFILE_FILE" ] || { vpn_monitor_log 'cycle skipped: no profiles'; return 0; }
+  if [ -e "$VPN_MONITOR_LOCK" ]; then
+    _lock_pid="$(cat "$VPN_MONITOR_LOCK" 2>/dev/null || true)"
+    case "$_lock_pid" in
+      ''|*[!0-9]*) rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true;;
+      *) kill -0 "$_lock_pid" 2>/dev/null && { vpn_monitor_log 'cycle skipped: lock exists'; return 0; } || rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true;;
+    esac
+  fi
+  printf '%s\n' "$$" > "$VPN_MONITOR_LOCK"
+  vpn_profiles_init || { rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true; return 0; }
+  [ -s "$VPN_PROFILE_FILE" ] || { vpn_monitor_log 'cycle skipped: no profiles'; rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true; return 0; }
   ACTIVE="$(vpn_profile_active_get)"
   if [ -z "$ACTIVE" ]; then ACTIVE="$(vpn_monitor_state_get preferred)"; fi
   if [ -z "$ACTIVE" ]; then ACTIVE="$(awk -F'|' 'NR==1{print $1}' "$VPN_PROFILE_FILE")"; vpn_profile_activate "$ACTIVE" >/dev/null 2>&1 || true; vpn_profile_active_set "$ACTIVE"; fi
@@ -1091,11 +1097,13 @@ vpn_monitor_run(){
     AR="$(awk -F'\t' -v p="$ACTIVE" '$1==p{print $2+0;exit}' "$VPN_PROFILE_BENCH_DIR/ranking.sorted.tsv" 2>/dev/null || echo 999999)"
     if [ "$FS" -lt $((AR-100)) ]; then vpn_profile_activate "$FAILED" >/dev/null 2>&1 && vpn_profile_active_set "$FAILED" && vpn_monitor_state_set last_switch "$NOW" && vpn_monitor_state_set failed_preferred '' && vpn_monitor_log "recovered preferred profile=$FAILED"; fi
   fi
+  rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true
 }
 
 # ---------- resource matrix + per-resource benchmark ----------
 RESOURCE_REPO_RAW='https://raw.githubusercontent.com/itdoginfo/allow-domains/main'
 RESOURCE_DIR='/etc/universal-openwrt/test-resources'
+[ "$DRY" = 1 ] && RESOURCE_DIR="$BASE/test-resources"
 ZAPRET_REPO_RAW='https://raw.githubusercontent.com/StressOzz/Zapret-Manager/main'
 ZAPRET_YOUTUBE_STRATEGIES_URL="$ZAPRET_REPO_RAW/Strategies_For_Youtube.md"
 ZAPRET_STRATEGIES_URL="$ZAPRET_REPO_RAW/Strategies.md"
@@ -1166,7 +1174,8 @@ resource_matrix_remote_update(){
   rm -f "$T"; return 0
 }
 resource_matrix_build_candidate(){
-  resource_matrix_init; M="$1"; O="$RESOURCE_DIR/active.lst"
+  resource_matrix_init || return 1
+  M="$1"; O="$RESOURCE_DIR/active.lst"
   case "$M" in
     quick) cat "$RESOURCE_DIR/critical.lst" "$RESOURCE_DIR/control.lst";;
     standard) cat "$RESOURCE_DIR/critical.lst" "$RESOURCE_DIR/video.lst" "$RESOURCE_DIR/social.lst" "$RESOURCE_DIR/messenger.lst" "$RESOURCE_DIR/ai.lst" "$RESOURCE_DIR/developer.lst" "$RESOURCE_DIR/streaming.lst" "$RESOURCE_DIR/control.lst";;
@@ -1206,7 +1215,17 @@ strategy_capability(){
   esac
 }
 STRATEGY_CHANGE_LOCK='/var/run/universal-openwrt-strategy-change.lock'
-strategy_change_lock(){ [ -e "$STRATEGY_CHANGE_LOCK" ] && return 1; : > "$STRATEGY_CHANGE_LOCK"; return 0; }
+strategy_change_lock(){
+  if [ -e "$STRATEGY_CHANGE_LOCK" ]; then
+    _lock_pid="$(cat "$STRATEGY_CHANGE_LOCK" 2>/dev/null || true)"
+    case "$_lock_pid" in
+      ''|*[!0-9]*) rm -f "$STRATEGY_CHANGE_LOCK" 2>/dev/null || true;;
+      *) kill -0 "$_lock_pid" 2>/dev/null && return 1 || rm -f "$STRATEGY_CHANGE_LOCK" 2>/dev/null || true;;
+    esac
+  fi
+  printf '%s\n' "$$" > "$STRATEGY_CHANGE_LOCK"
+  return 0
+}
 strategy_change_unlock(){ rm -f "$STRATEGY_CHANGE_LOCK" 2>/dev/null || true; }
 strategy_apply(){
   strategy_change_lock || { log 'Strategy change already in progress; refusing concurrent mutation'; return 3; }
@@ -1678,9 +1697,15 @@ resource_bench_one(){
 }
 resource_benchmark_run(){
   resource_bench_init || return 1
-  if [ -e "$RESOURCE_BENCH_LOCK" ]; then log 'Per-resource benchmark already running'; return 0; fi
-  : >"$RESOURCE_BENCH_LOCK"; trap 'rm -f "$RESOURCE_BENCH_LOCK" 2>/dev/null || true' EXIT
-  build_resource_list >/dev/null 2>&1 || return 1
+  if [ -e "$RESOURCE_BENCH_LOCK" ]; then
+    _lock_pid="$(cat "$RESOURCE_BENCH_LOCK" 2>/dev/null || true)"
+    case "$_lock_pid" in
+      ''|*[!0-9]*) rm -f "$RESOURCE_BENCH_LOCK" 2>/dev/null || true;;
+      *) kill -0 "$_lock_pid" 2>/dev/null && { log 'Per-resource benchmark already running'; return 0; } || rm -f "$RESOURCE_BENCH_LOCK" 2>/dev/null || true;;
+    esac
+  fi
+  printf '%s\n' "$$" > "$RESOURCE_BENCH_LOCK"
+  build_resource_list >/dev/null 2>&1 || { rm -f "$RESOURCE_BENCH_LOCK" 2>/dev/null || true; return 1; }
   LIMIT="$(resource_bench_limit)"; SRC="$BASE/last-problematic.txt"; [ -s "$SRC" ] || SRC="$CANDIDATE_FILE"
   OUT="$RESOURCE_BENCH_DIR/latest.tsv"; printf 'domain\tclass\tbaseline_status\tbest_strategy\tbest_status\tbest_score\tconfidence\n' >"$OUT"
   N=0
@@ -1692,6 +1717,7 @@ resource_benchmark_run(){
   cp -f "$OUT" "$ADAPT_DIR/resource-benchmark-latest.tsv" 2>/dev/null || true
   log "Per-resource benchmark complete: tested=$N mode=$SPEED output=$OUT"
   cat "$OUT"
+  rm -f "$RESOURCE_BENCH_LOCK" 2>/dev/null || true
 }
 resource_benchmark_status(){ resource_bench_init || return 1; [ -s "$RESOURCE_BENCH_DIR/latest.tsv" ] && cat "$RESOURCE_BENCH_DIR/latest.tsv" || log 'No per-resource benchmark yet'; }
 
@@ -1764,14 +1790,51 @@ PRED_LOCK='/var/run/universal-openwrt-predictive.lock'
 predictive_init(){ mkdir -p "$PRED_DIR" "$PRED_DIR/cache" 2>/dev/null || return 1; [ -f "$PRED_HISTORY" ] || printf 'ts\tdomain\tstatus\ttotal_s\treason\tstrategy\tmode\n' > "$PRED_HISTORY"; }
 predictive_state_get(){ predictive_init || return 1; awk -F= -v k="$1" '$1==k{print substr($0,index($0,"=")+1);exit}' "$PRED_STATE" 2>/dev/null; }
 predictive_state_set(){ predictive_init || return 1; K="$1"; V="$2"; T="$PRED_STATE.tmp.$$"; awk -F= -v k="$K" '$1!=k{print}' "$PRED_STATE" 2>/dev/null >"$T" || true; printf '%s=%s\n' "$K" "$V" >>"$T"; mv "$T" "$PRED_STATE"; }
-predictive_lock(){ [ -e "$PRED_LOCK" ] && return 1; : > "$PRED_LOCK"; trap 'rm -f "$PRED_LOCK" 2>/dev/null || true' EXIT; return 0; }
+predictive_lock(){
+  if [ -e "$PRED_LOCK" ]; then
+    _lock_pid="$(cat "$PRED_LOCK" 2>/dev/null || true)"
+    case "$_lock_pid" in
+      ''|*[!0-9]*) rm -f "$PRED_LOCK" 2>/dev/null || true;;
+      *) kill -0 "$_lock_pid" 2>/dev/null && return 1 || rm -f "$PRED_LOCK" 2>/dev/null || true;;
+    esac
+  fi
+  printf '%s\n' "$$" > "$PRED_LOCK"
+  return 0
+}
+predictive_unlock(){ rm -f "$PRED_LOCK" 2>/dev/null || true; }
 predictive_limit(){ case "$SPEED" in quick) echo 8;; standard) echo 20;; deep) echo 40;; *) echo 20;; esac; }
 predictive_record_file(){ FILE="$1"; STRAT="${2:-current}"; MODE="${3:-$SPEED}"; TS="$(date +%s)"; [ -s "$FILE" ] || return 0; awk -F '\t' -v ts="$TS" -v strat="$STRAT" -v mode="$MODE" 'NR>1&&NF>=7{print ts"\t"$1"\t"$2"\t"$7"\t"$3"\t"strat"\t"mode}' "$FILE" >> "$PRED_HISTORY"; }
 predictive_domain_score(){ D="$1"; awk -F '\t' -v d="$D" 'NR>1&&$2==d{n++;if($3=="OK")ok++;if($3=="SLOW_CANDIDATE")slow++;if($3=="HTTPS_FAIL")hf++;if($3=="BLOCKED_CANDIDATE")bl++;if($4+0>0){sum+=$4;nlat++}}END{if(n==0){print "0|0|0|0|0|0";exit}print n"|"ok"|"slow"|"hf"|"bl"|"(nlat?sum/nlat:99)}' "$PRED_HISTORY"; }
 predictive_strategy_hint(){ D="$1"; R="$(predictive_domain_score "$D")"; OK="$(printf '%s' "$R"|cut -d'|' -f2)"; SLOW="$(printf '%s' "$R"|cut -d'|' -f3)"; HF="$(printf '%s' "$R"|cut -d'|' -f4)"; BL="$(printf '%s' "$R"|cut -d'|' -f5)"; if [ "${BL:-0}" -gt 0 ];then echo vpn_or_dpi;elif [ "${HF:-0}" -gt 0 ];then echo https_or_dpi;elif [ "${SLOW:-0}" -gt 0 ];then echo latency_or_route;else echo healthy;fi; }
 predictive_build_plan(){ predictive_init || return 1; PLAN="$PRED_DIR/plan.tsv"; : > "$PLAN"; printf 'domain\thint\tpriority\n' > "$PLAN"; SRC="$BASE/last-problematic.txt"; [ -s "$SRC" ] || SRC="$CANDIDATE_FILE"; N=0; LIMIT="$(predictive_limit)"; while IFS= read -r D;do [ -n "$D" ]||continue;H="$(predictive_strategy_hint "$D")";case "$H" in vpn_or_dpi)P=3;;https_or_dpi)P=2;;latency_or_route)P=1;;*)P=0;;esac;printf '%s\t%s\t%s\n' "$D" "$H" "$P" >> "$PLAN";N=$((N+1));[ "$N" -ge "$LIMIT" ]&&break;done < "$SRC"; sort -t $'\t' -k3,3nr "$PLAN" > "$PLAN.tmp" 2>/dev/null && mv "$PLAN.tmp" "$PLAN" || true; predictive_state_set plan_ts "$(date +%s)"; log "Predictive plan built: $N resources"; }
 predictive_status(){ predictive_init || return 1; log "Predictive controller: active=$(predictive_state_get active) reason=$(predictive_state_get reason) ts=$(predictive_state_get ts)"; [ -s "$PRED_HISTORY" ]&&tail -n 20 "$PRED_HISTORY"||true; }
-predictive_auto(){ predictive_init || return 1; predictive_lock || { log 'Predictive controller already running'; return 0; };build_resource_list;[ -s "$BASE/last-problematic.txt" ]||benchmark_resources baseline >/dev/null 2>&1;predictive_record_file "$BASE/benchmark-baseline.tsv" baseline "$SPEED";predictive_build_plan;[ -s "$PRED_DIR/plan.tsv" ] || { log 'No predictive plan'; return 1; };NOW="$(date +%s)";LAST="$(predictive_state_get ts)";case "$LAST" in ''|*[!0-9]*)LAST=0;;esac;if [ $((NOW-LAST)) -lt 300 ]&&[ -n "$(predictive_state_get active)" ];then log 'Predictive decision cached for 5 minutes';return 0;fi;adaptive_controller_run >/dev/null 2>&1||true;ACTIVE="$(adaptive_state_get active 2>/dev/null || echo baseline)";REASON='mixed';grep -q 'vpn_or_dpi' "$PRED_DIR/plan.tsv" 2>/dev/null&&REASON='vpn_or_dpi';[ "$REASON" = mixed ]&&grep -q 'https_or_dpi' "$PRED_DIR/plan.tsv" 2>/dev/null&&REASON='https_or_dpi';predictive_state_set active "$ACTIVE";predictive_state_set reason "$REASON";predictive_state_set ts "$NOW";log "PREDICTIVE CONTROLLER: active=$ACTIVE reason=$REASON"; }
+predictive_auto(){
+  predictive_init || return 1
+  predictive_lock || { log 'Predictive controller already running'; return 0; }
+  build_resource_list || { predictive_unlock; return 1; }
+  [ -s "$BASE/last-problematic.txt" ] || benchmark_resources baseline >/dev/null 2>&1 || true
+  predictive_record_file "$BASE/benchmark-baseline.tsv" baseline "$SPEED"
+  predictive_build_plan
+  [ -s "$PRED_DIR/plan.tsv" ] || { log 'No predictive plan'; predictive_unlock; return 1; }
+  NOW="$(date +%s)"
+  LAST="$(predictive_state_get ts)"
+  case "$LAST" in ''|*[!0-9]*) LAST=0;; esac
+  if [ $((NOW-LAST)) -lt 300 ] && [ -n "$(predictive_state_get active)" ]; then
+    log 'Predictive decision cached for 5 minutes'
+    predictive_unlock
+    return 0
+  fi
+  adaptive_controller_run >/dev/null 2>&1 || true
+  ACTIVE="$(adaptive_state_get active 2>/dev/null || echo baseline)"
+  REASON='mixed'
+  grep -q 'vpn_or_dpi' "$PRED_DIR/plan.tsv" 2>/dev/null && REASON='vpn_or_dpi'
+  [ "$REASON" = mixed ] && grep -q 'https_or_dpi' "$PRED_DIR/plan.tsv" 2>/dev/null && REASON='https_or_dpi'
+  predictive_state_set active "$ACTIVE"
+  predictive_state_set reason "$REASON"
+  predictive_state_set ts "$NOW"
+  log "PREDICTIVE CONTROLLER: active=$ACTIVE reason=$REASON"
+  predictive_unlock
+}
 
 # ---------- compatibility matrix ----------
 probe_pkg(){
@@ -2333,6 +2396,12 @@ case "$MODE" in
     [ "$(id -u 2>/dev/null || echo 1)" = 0 ] || die 'root required'
     [ "$ASSUME_YES" = 1 ] || log 'Use -y for unattended installation; continuing interactively.'
     auto_optimize
+    if [ "$DRY" = 1 ]; then
+      log 'DRY-RUN: no configuration, package, backend or module changes will be applied.'
+      exit 0
+    fi
+    [ -n "$BACKEND_URL" ] || die 'installation requires --backend-url with a pinned HTTPS backend archive'
+    [ -n "$BACKEND_SHA256" ] || die 'installation requires --backend-sha256 for the pinned backend archive'
     backup
     runtime_baseline
     fetch_backend
