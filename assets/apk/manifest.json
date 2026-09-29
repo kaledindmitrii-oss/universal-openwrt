@@ -1,19 +1,19 @@
 {
-  "version": "30.2.16",
+  "version": "30.2.19",
   "format": "apk",
   "packages": [
     {
       "format": "apk",
-      "file": "luci-app-universal-openwrt-30.2.16-r1.apk",
-      "sha256": "93c554315ba8ee6d906bbc303126fe0caca5724c6f686bfbf7c54faa2caaab84",
-      "bytes": 6199,
+      "file": "luci-app-universal-openwrt-30.2.19-r1.apk",
+      "sha256": "2693a7b1e5b82f05fcd5be51c7fcf393ad4ea89df804b7e89d1cf2444440e7ce",
+      "bytes": 23965,
       "signed": false
     },
     {
       "format": "apk",
-      "file": "universal-openwrt-30.2.16-r1.apk",
-      "sha256": "3710ed9dadbb846ee53b3133f81f2e71db4daa36a013cb6dbea3066612a8ccd9",
-      "bytes": 47924,
+      "file": "universal-openwrt-30.2.19-r1.apk",
+      "sha256": "12c7cac1e63015d7b3e4f3c627877f57e1f2bcff7c61e6ba419625e9a35b73a0",
+      "bytes": 82423,
       "signed": false
     }
   ]

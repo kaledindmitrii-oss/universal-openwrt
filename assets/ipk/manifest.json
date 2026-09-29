@@ -1,19 +1,19 @@
 {
-  "version": "30.2.16",
+  "version": "30.2.19",
   "format": "ipk",
   "packages": [
     {
       "format": "ipk",
-      "file": "luci-app-universal-openwrt_30.2.16-1_all.ipk",
-      "sha256": "949a2fb114aaf804bddb290141e23fc1dd6fd92073881e9fba13bf835b0ad245",
-      "bytes": 6315,
+      "file": "luci-app-universal-openwrt_30.2.19-1_all.ipk",
+      "sha256": "11d24e7492495d9c7dc21e012a97d80d3de519cc311a7f152d3b55c756c570b5",
+      "bytes": 24143,
       "signed": false
     },
     {
       "format": "ipk",
-      "file": "universal-openwrt_30.2.16-1_all.ipk",
-      "sha256": "4bf62b17a32019b14cebc8b56479d13e3b485f590af2cf9b9e23cb41e4795f4b",
-      "bytes": 48121,
+      "file": "universal-openwrt_30.2.19-1_all.ipk",
+      "sha256": "6e0edea88fe999c2cfff08e3da7d60bec4b9ac44d00800445b029af85c215889",
+      "bytes": 82563,
       "signed": false
     }
   ]

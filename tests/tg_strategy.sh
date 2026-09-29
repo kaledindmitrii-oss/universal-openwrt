@@ -42,3 +42,9 @@ out="$(se_choose telegram)"
 test "$(printf '%s' "$out" | cut -f1)" = tg-socks5
 test "$(printf '%s' "$out" | cut -f2)" = tg-ws
 printf 'tg_strategy: OK\n'
+
+test "$(awk -F= '$1=="port"{print $2;exit}' "$TGGO_CONF")" = 1080
+grep -q "TGGO_PORT_DEFAULT=1080" "$ROOT/modules/tg-socks5-go.sh"
+! grep -q "GS='youtube telegram" "$ROOT/src/universal-openwrt"
+
+echo 'tg_strategy: dedicated Telegram isolation/default port: OK'

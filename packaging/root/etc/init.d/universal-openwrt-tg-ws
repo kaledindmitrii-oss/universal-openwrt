@@ -4,7 +4,11 @@ STOP=08
 USE_PROCD=1
 NAME=universal-openwrt-tg-ws
 
+controller_guard(){ [ -f /etc/universal-openwrt/telegram-controller.conf ] && grep -q '^enabled=1$' /etc/universal-openwrt/telegram-controller.conf; }
+
 start_service(){
+  controller_guard && return 0
+
   [ -f /etc/universal-openwrt/telegram-ws.conf ] || return 0
   . /usr/lib/universal-openwrt/tg-ws-proxy.sh 2>/dev/null || return 0
   tgws_load || return 0

@@ -5,7 +5,11 @@ USE_PROCD=1
 NAME=universal-openwrt-tg-proxy
 CONF=/etc/sing-box/telegram-socks5.json
 
+controller_guard(){ [ -f /etc/universal-openwrt/telegram-controller.conf ] && grep -q '^enabled=1$' /etc/universal-openwrt/telegram-controller.conf; }
+
 start_service(){
+  controller_guard && return 0
+
   [ -s "$CONF" ] || return 0
   SB="$(command -v sing-box 2>/dev/null || true)"
   [ -n "$SB" ] || return 0

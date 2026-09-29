@@ -8,7 +8,7 @@ define Package/luci-app-universal-openwrt
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=Universal OpenWrt manager
-  DEPENDS:=+luci +luci-base +rpcd +rpcd-mod-ucode +ucode
+  DEPENDS:=+luci +luci-base +rpcd +rpcd-mod-ucode +ucode +qrencode
 endef
 define Package/luci-app-universal-openwrt/description
   LuCI management interface for Universal OpenWrt adaptive DPI/DNS/WARP stack.

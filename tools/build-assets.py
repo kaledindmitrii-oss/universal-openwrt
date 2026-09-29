@@ -11,6 +11,11 @@ VERSION=(ROOT/"VERSION").read_text().strip()
 OUT=ROOT/"assets"
 
 def add(t,src,arc,mode):
+    arc = str(arc).replace("\\", "/")
+    if not arc or arc.startswith("/"):
+        raise RuntimeError(f"Invalid archive path: {arc}")
+    if ".." in Path(arc).parts:
+        raise RuntimeError(f"Path traversal in archive path: {arc}")
     data=Path(src).read_bytes(); i=tarfile.TarInfo(arc); i.size=len(data); i.mode=mode; i.mtime=0;i.uid=0;i.gid=0
     t.addfile(i,io.BytesIO(data))
 def data_tar(files):
@@ -37,11 +42,22 @@ def files_for(sub):
         out=[(ROOT/"src/universal-openwrt","usr/sbin/universal-openwrt",0o755)]
         out += [(f,f"usr/lib/universal-openwrt/{f.name}",0o755) for f in (ROOT/"modules").glob("*.sh")]
         out += [(f,f"etc/init.d/{f.name}",0o755) for f in (ROOT/"packaging/root/etc/init.d").iterdir() if f.is_file()]
-        out += [(f,f"usr/lib/universal-openwrt/test-resources/{f.relative_to(ROOT/'resources')}",0o644) for f in (ROOT/"resources").rglob("*") if f.is_file()]
+        resources_root = ROOT / "resources"
+        for f in resources_root.rglob("*"):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(resources_root).as_posix()
+            out.append(
+                (
+                    f,
+                    f"usr/lib/universal-openwrt/test-resources/{rel}",
+                    0o644,
+                )
+            )
     else:
         for f in (ROOT/"luci-app-universal-openwrt").rglob("*"):
             if not f.is_file():continue
-            r=str(f.relative_to(ROOT/"luci-app-universal-openwrt"))
+            r=f.relative_to(ROOT/"luci-app-universal-openwrt").as_posix()
             if r.startswith("root/"): a=r[5:]
             elif r.startswith("htdocs/"): a="www/"+r[7:]
             else: continue
@@ -86,7 +102,7 @@ def apk(name,files,depends):
     control_raw=cb.getvalue().rstrip(b"\0")
     return gz(control_raw)+data_gz
 
-spec=[("universal-openwrt",files_for("core"),[]),("luci-app-universal-openwrt",files_for("luci"),["universal-openwrt","luci","luci-base","rpcd","rpcd-mod-ucode","ucode"])]
+spec=[("universal-openwrt",files_for("core"),[]),("luci-app-universal-openwrt",files_for("luci"),["universal-openwrt","luci","luci-base","rpcd","rpcd-mod-ucode","ucode","qrencode"])]
 (OUT/"ipk").mkdir(parents=True,exist_ok=True);(OUT/"apk").mkdir(parents=True,exist_ok=True)
 # Keep generated asset directories deterministic: remove packages from older releases.
 for fmt, ext in (("ipk", "ipk"), ("apk", "apk")):

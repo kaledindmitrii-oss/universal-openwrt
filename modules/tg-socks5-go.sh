@@ -6,13 +6,16 @@ TGGO_CONF=${TGGO_CONF:-/etc/universal-openwrt/telegram-socks5-go.conf}
 TGGO_PID=${TGGO_PID:-/var/run/universal-openwrt-tg-socks5-go.pid}
 TGGO_LOG=${TGGO_LOG:-/var/log/universal-openwrt-tg-socks5-go.log}
 TGGO_PORT_DEFAULT=1080
+TGGO_PORT_LOCKFILE=${TGGO_PORT_LOCKFILE:-/var/run/universal-openwrt-tg-socks5-go.port.lock}
 TGGO_REPO='d0mhate/-tg-ws-proxy-Manager-go'
+UOWRT_LIB_DIR="${UOWRT_LIB_DIR:-/usr/lib/universal-openwrt}"
+[ -f "$UOWRT_LIB_DIR/source-resolver.sh" ] && . "$UOWRT_LIB_DIR/source-resolver.sh" 2>/dev/null || true
 
 tggo_init(){
   mkdir -p "$(dirname "$TGGO_CONF")" "$(dirname "$TGGO_PID")" "$(dirname "$TGGO_LOG")" 2>/dev/null || return 1
   [ -f "$TGGO_CONF" ] || cat >"$TGGO_CONF" <<'EOL'
 enabled=0
-host=0.0.0.0
+host=auto
 port=1080
 username=
 password=
@@ -28,9 +31,10 @@ EOL
 
 tggo_load(){
   tggo_init || return 1
-  enabled=0; host=0.0.0.0; port=1080; username=''; password=''; cf_proxy=1; cf_proxy_first=1; cf_balance=1; pool_size=4; buf_kb=256; dial_timeout=10s; init_timeout=15s
+  enabled=0; host=auto; port=$TGGO_PORT_DEFAULT; username=''; password=''; cf_proxy=1; cf_proxy_first=1; cf_balance=1; pool_size=4; buf_kb=256; dial_timeout=10s; init_timeout=15s
   . "$TGGO_CONF" 2>/dev/null || true
   TGGO_ENABLED="$enabled"; TGGO_HOST="$host"; TGGO_PORT="$port"; TGGO_USER="$username"; TGGO_PASS="$password"; TGGO_CF_PROXY="$cf_proxy"; TGGO_CF_FIRST="$cf_proxy_first"; TGGO_CF_BALANCE="$cf_balance"; TGGO_POOL="$pool_size"; TGGO_BUF="$buf_kb"; TGGO_DIAL="$dial_timeout"; TGGO_INIT="$init_timeout"
+  if [ "$TGGO_HOST" = auto ]; then TGGO_HOST="$(tggo_lan_ip 2>/dev/null || true)"; [ -n "$TGGO_HOST" ] || TGGO_HOST=127.0.0.1; fi
 }
 
 tggo_arch(){
@@ -49,8 +53,19 @@ tggo_arch(){
 }
 
 tggo_process_running(){
-  [ -f "$TGGO_PID" ] && kill -0 "$(cat "$TGGO_PID" 2>/dev/null)" 2>/dev/null && return 0
-  pidof tg-ws-proxy-go >/dev/null 2>&1
+  if [ -f "$TGGO_PID" ]; then
+    PID="$(cat "$TGGO_PID" 2>/dev/null)"
+    case "$PID" in ''|*[!0-9]*) PID='' ;; esac
+    [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && return 0
+  fi
+  # procd-managed instances do not necessarily create TGGO_PID. Match the
+  # executable path instead of blindly trusting pidof's process name.
+  for PID in $(pidof tg-ws-proxy-go 2>/dev/null || true); do
+    [ -r "/proc/$PID/exe" ] || continue
+    EXE="$(readlink "/proc/$PID/exe" 2>/dev/null || true)"
+    [ "$EXE" = "$TGGO_BIN" ] && return 0
+  done
+  return 1
 }
 
 tggo_installed(){ [ -x "$TGGO_BIN" ]; }
@@ -80,9 +95,13 @@ tggo_status(){
 
 tggo_stop(){
   if [ -f "$TGGO_PID" ]; then
-    PID="$(cat "$TGGO_PID" 2>/dev/null)"; kill "$PID" 2>/dev/null || true; sleep 1; kill -9 "$PID" 2>/dev/null || true; rm -f "$TGGO_PID"
+    PID="$(cat "$TGGO_PID" 2>/dev/null)"
+    case "$PID" in ''|*[!0-9]*) PID='' ;; esac
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+      kill "$PID" 2>/dev/null || true; sleep 1; kill -9 "$PID" 2>/dev/null || true
+    fi
+    rm -f "$TGGO_PID"
   fi
-  pidof tg-ws-proxy-go >/dev/null 2>&1 && kill "$(pidof tg-ws-proxy-go)" 2>/dev/null || true
 }
 
 tggo_install(){
@@ -93,9 +112,9 @@ tggo_install(){
   EXPECTED_SHA=''
   LATEST_TAG=''
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --connect-timeout 10 --max-time 30 https://api.github.com/repos/$TGGO_REPO/releases/latest -o "$API_JSON" 2>/dev/null || true
+    if command -v uowrt_fetch >/dev/null 2>&1; then uowrt_fetch "$API_JSON" https://api.github.com/repos/$TGGO_REPO/releases/latest >/dev/null 2>&1 || true; else curl -fsSL --connect-timeout 10 --max-time 30 https://api.github.com/repos/$TGGO_REPO/releases/latest -o "$API_JSON" 2>/dev/null || true; fi
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -T 15 -O "$API_JSON" https://api.github.com/repos/$TGGO_REPO/releases/latest 2>/dev/null || true
+    if command -v uowrt_fetch >/dev/null 2>&1; then uowrt_fetch "$API_JSON" https://api.github.com/repos/$TGGO_REPO/releases/latest >/dev/null 2>&1 || true; else wget -q -T 15 -O "$API_JSON" https://api.github.com/repos/$TGGO_REPO/releases/latest 2>/dev/null || true; fi
   fi
   if [ -s "$API_JSON" ]; then
     LATEST_TAG="$(sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' "$API_JSON" | head -n1)"
@@ -107,7 +126,9 @@ tggo_install(){
   URL="https://github.com/$TGGO_REPO/releases/download/$LATEST_TAG/$ASSET"
   [ "$LATEST_TAG" = latest ] && URL="https://github.com/$TGGO_REPO/releases/latest/download/$ASSET"
   echo "Downloading $ASSET from $URL"
-  if command -v curl >/dev/null 2>&1; then
+  if command -v uowrt_fetch >/dev/null 2>&1; then
+    uowrt_fetch "$TMP.tmp" "$URL" || { rm -f "$TMP" "$TMP.tmp"; return 1; }
+  elif command -v curl >/dev/null 2>&1; then
     curl -fL --connect-timeout 15 --max-time 180 "$URL" -o "$TMP.tmp" || { rm -f "$TMP" "$TMP.tmp"; return 1; }
   elif command -v wget >/dev/null 2>&1; then
     wget -T 20 -O "$TMP.tmp" "$URL" || { rm -f "$TMP" "$TMP.tmp"; return 1; }
@@ -118,6 +139,9 @@ tggo_install(){
   fi
   [ -s "$TMP.tmp" ] || { rm -f "$TMP" "$TMP.tmp"; return 1; }
   mv "$TMP.tmp" "$TMP"; chmod 755 "$TMP"
+  # Never install a remotely fetched executable without a release digest.
+  [ -n "$EXPECTED_SHA" ] || { echo 'TG SOCKS5 release has no SHA256 digest; refusing unverified binary'; rm -f "$TMP"; return 1; }
+  command -v sha256sum >/dev/null 2>&1 || { echo 'sha256sum is required for TG SOCKS5 binary verification'; rm -f "$TMP"; return 1; }
   if [ -n "$EXPECTED_SHA" ] && command -v sha256sum >/dev/null 2>&1; then
     ACTUAL_SHA="$(sha256sum "$TMP" | awk '{print $1}')"
     [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo "TG SOCKS5 binary SHA256 mismatch (expected $EXPECTED_SHA, got $ACTUAL_SHA)"; rm -f "$TMP"; return 1; }
@@ -128,25 +152,42 @@ tggo_install(){
   echo "TG SOCKS5 binary installed: $TGGO_BIN"
 }
 
+tggo_probe_local(){
+  tggo_load || return 1
+  tggo_running || return 1
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --socks5-hostname "127.0.0.1:$TGGO_PORT" --connect-timeout 5 --max-time 12 https://telegram.org/ -o /dev/null >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
 tggo_enable(){
   tggo_load || return 1
-  case "$TGGO_PORT" in ''|*[!0-9]*|0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9][0-9][0-9]*) echo 'Invalid Telegram SOCKS5 port'; return 1;; esac
+  case "$TGGO_PORT" in ''|*[!0-9]*|0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]*) echo 'Invalid Telegram SOCKS5 port'; return 1;; esac
   if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk -v p=":$TGGO_PORT" '$4 ~ p"$"{found=1} END{exit(found?0:1)}'; then
     tggo_process_running || { echo "Telegram SOCKS5 port $TGGO_PORT is already in use"; return 2; }
+  elif command -v netstat >/dev/null 2>&1 && netstat -lnt 2>/dev/null | awk -v p=":$TGGO_PORT" '$4 ~ p"$"{found=1} END{exit(found?0:1)}'; then
+    tggo_process_running || { echo "Telegram SOCKS5 port $TGGO_PORT is already in use"; return 2; }
   fi
+  [ "$TGGO_PORT" = 1080 ] || echo "Telegram SOCKS5 custom port: $TGGO_PORT (project default is 1080)"
   tggo_installed || tggo_install || return 1
   sed -i 's/^enabled=.*/enabled=1/' "$TGGO_CONF"
-  if [ -x /etc/init.d/universal-openwrt-tg-socks5-go ]; then
+  tggo_stop
+  ARGS="--mode socks5 --host $TGGO_HOST --port $TGGO_PORT --buf-kb $TGGO_BUF --pool-size $TGGO_POOL --dial-timeout $TGGO_DIAL --init-timeout $TGGO_INIT"
+  [ "$TGGO_CF_PROXY" = 1 ] && ARGS="$ARGS --cf-proxy"
+  [ "$TGGO_CF_FIRST" = 1 ] && ARGS="$ARGS --cf-proxy-first"
+  [ "$TGGO_CF_BALANCE" = 1 ] && ARGS="$ARGS --cf-balance"
+  [ -n "$TGGO_USER" ] && ARGS="$ARGS --username $TGGO_USER"
+  [ -n "$TGGO_PASS" ] && ARGS="$ARGS --password $TGGO_PASS"
+  if [ -f /etc/universal-openwrt/telegram-controller.conf ] && grep -q '^enabled=1$' /etc/universal-openwrt/telegram-controller.conf; then
+    # Controller-owned Telegram backend: start directly so the guarded init.d provider cannot recurse.
+    # shellcheck disable=SC2086
+    nohup "$TGGO_BIN" $ARGS >>"$TGGO_LOG" 2>&1 & echo $! >"$TGGO_PID"
+    sleep 1
+  elif [ -x /etc/init.d/universal-openwrt-tg-socks5-go ]; then
     /etc/init.d/universal-openwrt-tg-socks5-go enable >/dev/null 2>&1 || true
     /etc/init.d/universal-openwrt-tg-socks5-go restart >/dev/null 2>&1 || true
   else
-    tggo_stop
-    ARGS="--mode socks5 --host $TGGO_HOST --port $TGGO_PORT --buf-kb $TGGO_BUF --pool-size $TGGO_POOL --dial-timeout $TGGO_DIAL --init-timeout $TGGO_INIT"
-    [ "$TGGO_CF_PROXY" = 1 ] && ARGS="$ARGS --cf-proxy"
-    [ "$TGGO_CF_FIRST" = 1 ] && ARGS="$ARGS --cf-proxy-first"
-    [ "$TGGO_CF_BALANCE" = 1 ] && ARGS="$ARGS --cf-balance"
-    [ -n "$TGGO_USER" ] && ARGS="$ARGS --username $TGGO_USER"
-    [ -n "$TGGO_PASS" ] && ARGS="$ARGS --password $TGGO_PASS"
     # shellcheck disable=SC2086
     nohup "$TGGO_BIN" $ARGS >>"$TGGO_LOG" 2>&1 & echo $! >"$TGGO_PID"
     sleep 1

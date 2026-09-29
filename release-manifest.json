@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "repository": "kaledindmitrii-oss/universal-openwrt",
-  "tag": "v30.2.16",
-  "version": "30.2.16",
+  "tag": "v30.2.19",
+  "version": "30.2.19",
   "supported": {
     "openwrt": [
       "24.10.2+",
@@ -13,74 +13,74 @@
   },
   "packages": {
     "opkg": {
-      "file": "universal-openwrt_30.2.16-1_all.ipk",
-      "path": "assets/ipk/universal-openwrt_30.2.16-1_all.ipk",
-      "bytes": 48121,
-      "sha256": "4bf62b17a32019b14cebc8b56479d13e3b485f590af2cf9b9e23cb41e4795f4b",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt_30.2.16-1_all.ipk"
+      "file": "universal-openwrt_30.2.19-1_all.ipk",
+      "path": "assets/ipk/universal-openwrt_30.2.19-1_all.ipk",
+      "bytes": 82563,
+      "sha256": "6e0edea88fe999c2cfff08e3da7d60bec4b9ac44d00800445b029af85c215889",
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/universal-openwrt_30.2.19-1_all.ipk"
     },
     "opkg_luci": {
-      "file": "luci-app-universal-openwrt_30.2.16-1_all.ipk",
-      "path": "assets/ipk/luci-app-universal-openwrt_30.2.16-1_all.ipk",
-      "bytes": 6315,
-      "sha256": "949a2fb114aaf804bddb290141e23fc1dd6fd92073881e9fba13bf835b0ad245",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/luci-app-universal-openwrt_30.2.16-1_all.ipk"
+      "file": "luci-app-universal-openwrt_30.2.19-1_all.ipk",
+      "path": "assets/ipk/luci-app-universal-openwrt_30.2.19-1_all.ipk",
+      "bytes": 24143,
+      "sha256": "11d24e7492495d9c7dc21e012a97d80d3de519cc311a7f152d3b55c756c570b5",
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/luci-app-universal-openwrt_30.2.19-1_all.ipk"
     },
     "apk": {
-      "file": "universal-openwrt-30.2.16-r1.apk",
-      "path": "assets/apk/universal-openwrt-30.2.16-r1.apk",
-      "bytes": 47924,
-      "sha256": "3710ed9dadbb846ee53b3133f81f2e71db4daa36a013cb6dbea3066612a8ccd9",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-30.2.16-r1.apk"
+      "file": "universal-openwrt-30.2.19-r1.apk",
+      "path": "assets/apk/universal-openwrt-30.2.19-r1.apk",
+      "bytes": 82423,
+      "sha256": "12c7cac1e63015d7b3e4f3c627877f57e1f2bcff7c61e6ba419625e9a35b73a0",
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/universal-openwrt-30.2.19-r1.apk"
     },
     "apk_luci": {
-      "file": "luci-app-universal-openwrt-30.2.16-r1.apk",
-      "path": "assets/apk/luci-app-universal-openwrt-30.2.16-r1.apk",
-      "bytes": 6199,
-      "sha256": "93c554315ba8ee6d906bbc303126fe0caca5724c6f686bfbf7c54faa2caaab84",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/luci-app-universal-openwrt-30.2.16-r1.apk"
+      "file": "luci-app-universal-openwrt-30.2.19-r1.apk",
+      "path": "assets/apk/luci-app-universal-openwrt-30.2.19-r1.apk",
+      "bytes": 23965,
+      "sha256": "2693a7b1e5b82f05fcd5be51c7fcf393ad4ea89df804b7e89d1cf2444440e7ce",
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/luci-app-universal-openwrt-30.2.19-r1.apk"
     }
   },
   "assets": [
     {
-      "file": "luci-app-universal-openwrt-30.2.16-r1.apk",
-      "path": "assets/apk/luci-app-universal-openwrt-30.2.16-r1.apk",
-      "bytes": 6199,
-      "sha256": "93c554315ba8ee6d906bbc303126fe0caca5724c6f686bfbf7c54faa2caaab84",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/luci-app-universal-openwrt-30.2.16-r1.apk"
+      "file": "luci-app-universal-openwrt-30.2.19-r1.apk",
+      "path": "assets/apk/luci-app-universal-openwrt-30.2.19-r1.apk",
+      "bytes": 23965,
+      "sha256": "2693a7b1e5b82f05fcd5be51c7fcf393ad4ea89df804b7e89d1cf2444440e7ce",
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/luci-app-universal-openwrt-30.2.19-r1.apk"
     },
     {
-      "file": "universal-openwrt-30.2.16-r1.apk",
-      "path": "assets/apk/universal-openwrt-30.2.16-r1.apk",
-      "bytes": 47924,
-      "sha256": "3710ed9dadbb846ee53b3133f81f2e71db4daa36a013cb6dbea3066612a8ccd9",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-30.2.16-r1.apk"
+      "file": "universal-openwrt-30.2.19-r1.apk",
+      "path": "assets/apk/universal-openwrt-30.2.19-r1.apk",
+      "bytes": 82423,
+      "sha256": "12c7cac1e63015d7b3e4f3c627877f57e1f2bcff7c61e6ba419625e9a35b73a0",
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/universal-openwrt-30.2.19-r1.apk"
     },
     {
-      "file": "luci-app-universal-openwrt_30.2.16-1_all.ipk",
-      "path": "assets/ipk/luci-app-universal-openwrt_30.2.16-1_all.ipk",
-      "bytes": 6315,
-      "sha256": "949a2fb114aaf804bddb290141e23fc1dd6fd92073881e9fba13bf835b0ad245",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/luci-app-universal-openwrt_30.2.16-1_all.ipk"
+      "file": "luci-app-universal-openwrt_30.2.19-1_all.ipk",
+      "path": "assets/ipk/luci-app-universal-openwrt_30.2.19-1_all.ipk",
+      "bytes": 24143,
+      "sha256": "11d24e7492495d9c7dc21e012a97d80d3de519cc311a7f152d3b55c756c570b5",
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/luci-app-universal-openwrt_30.2.19-1_all.ipk"
     },
     {
-      "file": "universal-openwrt_30.2.16-1_all.ipk",
-      "path": "assets/ipk/universal-openwrt_30.2.16-1_all.ipk",
-      "bytes": 48121,
-      "sha256": "4bf62b17a32019b14cebc8b56479d13e3b485f590af2cf9b9e23cb41e4795f4b",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt_30.2.16-1_all.ipk"
+      "file": "universal-openwrt_30.2.19-1_all.ipk",
+      "path": "assets/ipk/universal-openwrt_30.2.19-1_all.ipk",
+      "bytes": 82563,
+      "sha256": "6e0edea88fe999c2cfff08e3da7d60bec4b9ac44d00800445b029af85c215889",
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/universal-openwrt_30.2.19-1_all.ipk"
     },
     {
-      "file": "universal-openwrt-v30.2.16.tar.gz",
+      "file": "universal-openwrt-v30.2.19.tar.gz",
       "bytes": 0,
       "sha256": "",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-v30.2.16.tar.gz"
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/universal-openwrt-v30.2.19.tar.gz"
     },
     {
-      "file": "universal-openwrt-v30.2.16.zip",
+      "file": "universal-openwrt-v30.2.19.zip",
       "bytes": 0,
       "sha256": "",
-      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.16/universal-openwrt-v30.2.16.zip"
+      "url": "https://github.com/kaledindmitrii-oss/universal-openwrt/releases/download/v30.2.19/universal-openwrt-v30.2.19.zip"
     }
   ]
 }

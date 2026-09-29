@@ -57,7 +57,8 @@ tgws_status(){
   CONFIGURED=no; [ "$TGWS_ENABLED" = 1 ] && [ -n "$TGWS_SECRET" ] && [ -n "$BIN" ] && CONFIGURED=yes
   RUNNING=no; [ "$TGWS_ENABLED" = 1 ] && [ "$PROCESS_RUNNING" = yes ] && RUNNING=yes
   ACTIVE=no; [ "$RUNNING" = yes ] && [ "$CONFIGURED" = yes ] && ACTIVE=yes
-  printf 'enabled=%s\nport=%s\nrunning=%s\nprocess_running=%s\nbinary=%s\nconfigured=%s\nactive=%s\n' "$TGWS_ENABLED" "$TGWS_PORT" "$RUNNING" "$PROCESS_RUNNING" "${BIN:-missing}" "$CONFIGURED" "$ACTIVE"
+  LINK=''; LINK_SCOPE=''; HOST="$TGWS_LINK_IP"; [ -n "$HOST" ] || HOST="$(uci -q get network.lan.ipaddr 2>/dev/null || true)"; if [ -n "$HOST" ] && [ -n "$TGWS_SECRET" ]; then LINK="tg://proxy?server=$HOST&port=$TGWS_PORT&secret=$TGWS_SECRET"; [ -n "$TGWS_LINK_IP" ] && LINK_SCOPE=public || LINK_SCOPE=lan; fi
+printf 'enabled=%s\nport=%s\nrunning=%s\nprocess_running=%s\nbinary=%s\nconfigured=%s\nactive=%s\nsecret=%s\nlink_host=%s\nlink_scope=%s\ntg_link=%s\n' "$TGWS_ENABLED" "$TGWS_PORT" "$RUNNING" "$PROCESS_RUNNING" "${BIN:-missing}" "$CONFIGURED" "$ACTIVE" "$TGWS_SECRET" "$HOST" "$LINK_SCOPE" "$LINK"
 }
 
 tgws_stop(){
@@ -71,8 +72,19 @@ tgws_enable(){
   [ -n "$BIN" ] || { echo 'Telegram WS backend binary is not installed'; return 2; }
   case "$TGWS_PORT" in ''|*[!0-9]*|0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9][0-9][0-9]*) echo 'Invalid Telegram WS port'; return 1;; esac
   [ -n "$TGWS_SECRET" ] || { echo 'Telegram WS secret is not configured'; return 2; }
-  if [ -x /etc/init.d/universal-openwrt-tg-ws ]; then /etc/init.d/universal-openwrt-tg-ws enable >/dev/null 2>&1 || true; /etc/init.d/universal-openwrt-tg-ws restart >/dev/null 2>&1; sleep 1; tgws_status; tgws_running; return $?; fi
   tgws_stop
+  if [ -f /etc/universal-openwrt/telegram-controller.conf ] && grep -q '^enabled=1$' /etc/universal-openwrt/telegram-controller.conf; then
+    # Controller-owned backend: start directly because init.d intentionally yields to the controller.
+    ARGS="--port $TGWS_PORT --secret $TGWS_SECRET"
+    [ -n "$TGWS_LINK_IP" ] && ARGS="$ARGS --link-ip $TGWS_LINK_IP"
+    # shellcheck disable=SC2086
+    nohup "$BIN" $ARGS >>"$TGWS_LOG" 2>&1 &
+    PID=$!; echo "$PID" >"$TGWS_PID"; sleep 1
+    kill -0 "$PID" 2>/dev/null || { rm -f "$TGWS_PID"; echo 'Telegram WS backend failed to start'; return 1; }
+    echo "Telegram MTProto WebSocket proxy started on port $TGWS_PORT"
+    return 0
+  fi
+  if [ -x /etc/init.d/universal-openwrt-tg-ws ]; then /etc/init.d/universal-openwrt-tg-ws enable >/dev/null 2>&1 || true; /etc/init.d/universal-openwrt-tg-ws restart >/dev/null 2>&1; sleep 1; tgws_status; tgws_running; return $?; fi
   ARGS="--port $TGWS_PORT --secret $TGWS_SECRET"
   [ -n "$TGWS_LINK_IP" ] && ARGS="$ARGS --link-ip $TGWS_LINK_IP"
   # shellcheck disable=SC2086

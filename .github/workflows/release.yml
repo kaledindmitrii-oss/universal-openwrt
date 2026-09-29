@@ -22,7 +22,7 @@ jobs:
         run: |
           VERSION="$(cat VERSION)"
           mkdir -p "dist/universal-openwrt-v${VERSION}"
-          cp -R src installer modules luci-app-universal-openwrt packaging resources assets tools docs tests .github README.md LICENSE VERSION CHANGELOG.md install-luci.sh push-to-github.cmd push-to-github.ps1 release-manifest.json dist/universal-openwrt-v${VERSION}/
+          cp -R src installer modules luci-app-universal-openwrt packaging resources assets tools docs tests .github README.md LICENSE VERSION CHANGELOG.md install-luci.sh push-to-github.cmd push-to-github.ps1 Universal-OpenWrt-Launcher.bat release-manifest.json dist/universal-openwrt-v${VERSION}/
           cp assets/ipk/*.ipk assets/apk/*.apk release-manifest.json dist/
           tar -C dist -czf "dist/universal-openwrt-v${VERSION}.tar.gz" "universal-openwrt-v${VERSION}"
           (cd dist && zip -qr "universal-openwrt-v${VERSION}.zip" "universal-openwrt-v${VERSION}")

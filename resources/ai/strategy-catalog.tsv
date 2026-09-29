@@ -1,0 +1,9 @@
+# id	class	transport	engine	priority	when_to_try	notes
+ai-direct	all	TCP/UDP	core	0	PASS	Control path; never intercept healthy traffic.
+ai-dns	dns	DNS	doh-unpoison	10	DNS_BLOCK	Use only after DNS failure/poisoning is confirmed.
+ai-tcp-multidisorder	dpi	TCP/443	zapret2-nfqws2	20	DPI_BLOCK,QUIC_BLOCK	Preferred DPI family; requires a compatible nfqws2 backend/profile.
+ai-tcp-multisplit	dpi	TCP/443	zapret2-nfqws2	21	DPI_BLOCK	Second TCP family; test only after the first candidate fails.
+ai-quic-fake	dpi	UDP/443	zapret2-nfqws2	22	QUIC_BLOCK	QUIC-specific candidate; do not use when HTTP/3 is already healthy.
+ai-tcp-nfqws1	dpi	TCP/443	zapret-nfqws	30	DPI_BLOCK	Legacy v1 fallback; never run overlapping nfqws1/nfqws2 interception.
+ai-selective-proxy	proxy	TCP/443+UDP/443	proxy	40	IP_BLOCK,GEO_BLOCK	Selective relay for endpoints unreachable at TCP level or region restricted.
+ai-warp-selective	proxy	TCP/443+UDP/443	warp	50	IP_BLOCK,GEO_BLOCK	Optional AWG/WARP route; WARP is not a guaranteed country selector.

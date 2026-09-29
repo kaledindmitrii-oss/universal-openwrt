@@ -4,37 +4,39 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 V="$(cat "$ROOT/VERSION")"
 for f in "$ROOT/src/universal-openwrt" "$ROOT/installer/install.sh" "$ROOT/install-luci.sh" "$ROOT/tests"/*.sh "$ROOT/modules"/*.sh "$ROOT/packaging/root/etc/init.d"/*; do sh -n "$f"; done
 for f in universal-openwrt-tg-proxy universal-openwrt-tg-ws universal-openwrt-tg-socks5-go universal-openwrt-vpn-monitor; do test -f "$ROOT/packaging/root/etc/init.d/$f"; done
-python3 - "$ROOT" "$V" <<'PY'
+python - "$ROOT" "$V" <<'PY'
 import sys,re,json,hashlib,gzip,io,tarfile,zlib
 from pathlib import Path
 root=Path(sys.argv[1]); V=sys.argv[2]
-src=(root/'src/universal-openwrt').read_text()
+src=(root/'src/universal-openwrt').read_text(encoding='utf-8')
 # no CR bytes in runtime/install files
 for base in ['src','modules','installer','packaging','luci-app-universal-openwrt']:
   for f in (root/base).rglob('*'):
     if f.is_file(): assert b'\r' not in f.read_bytes(), f
 assert b'\r' not in (root/'install-luci.sh').read_bytes()
 assert 'archive/refs/heads/${REF}.tar.gz' not in src
-inst=(root/'installer/install.sh').read_text()
+inst=(root/'installer/install.sh').read_text(encoding='utf-8')
 assert 'archive/refs/tags/${REF}.tar.gz' in inst
 assert 'archive/refs/heads/${REF}.tar.gz' in inst
-luci=(root/'install-luci.sh').read_text()
+luci=(root/'install-luci.sh').read_text(encoding='utf-8')
 assert 'archive/refs/tags/${REF}.tar.gz' in luci
-assert '24.10.2+' in (root/'installer/install.sh').read_text()
+assert '30.2.19' in (root/'installer/install.sh').read_text(encoding='utf-8')
+assert (root/'modules/source-resolver.sh').is_file()
+assert 'source-resolver.sh' in (root/'tests/release_integrity.sh').read_text(encoding='utf-8')
 assert 'UOW_BACKEND_SHA256' in src
-assert (root/'VERSION').read_text().strip() in (root/'README.md').read_text()
-rm = json.loads((root/'release-manifest.json').read_text())
+assert (root/'VERSION').read_text(encoding='utf-8').strip() in (root/'README.md').read_text(encoding='utf-8')
+rm = json.loads((root/'release-manifest.json').read_text(encoding='utf-8'))
 assert rm['version'] == V and rm['tag'] == 'v' + V
 for key in ['opkg','opkg_luci','apk','apk_luci']:
     assert rm['packages'][key] and rm['packages'][key]['sha256']
-assert 'releases/download/v' + V in (root/'release-manifest.json').read_text()
+assert 'releases/download/v' + V in (root/'release-manifest.json').read_text(encoding='utf-8')
 
-assert (root/'VERSION').read_text().strip() in (root/'installer/install.sh').read_text()
+assert (root/'VERSION').read_text(encoding='utf-8').strip() in (root/'installer/install.sh').read_text(encoding='utf-8')
 assert '--backend-sha256' in src
-assert '__UOWRT_RC=' in (root/'luci-app-universal-openwrt/root/usr/share/rpcd/ucode/luci.universal_openwrt').read_text()
-assert 'exit_code' in (root/'luci-app-universal-openwrt/root/usr/share/rpcd/ucode/luci.universal_openwrt').read_text()
+assert '__UOWRT_RC=' in (root/'luci-app-universal-openwrt/root/usr/share/rpcd/ucode/luci.universal_openwrt').read_text(encoding='utf-8')
+assert 'exit_code' in (root/'luci-app-universal-openwrt/root/usr/share/rpcd/ucode/luci.universal_openwrt').read_text(encoding='utf-8')
 # Installer must never reference an init script that is absent from the release tree.
-inst=(root/'installer/install.sh').read_text()
+inst=(root/'installer/install.sh').read_text(encoding='utf-8')
 for m in re.findall(r'packaging/root/etc/init\.d/([A-Za-z0-9._-]+)', inst):
     assert (root/'packaging/root/etc/init.d'/m).is_file(), m
 # Every dispatch mode must be implemented before runtime dispatch executes.
@@ -45,7 +47,7 @@ for i,line in enumerate(lines,1):
     if m: fn_line[m.group(1)]=i
 module_fns=set()
 for mf in (root/'modules').glob('*.sh'):
-    for line in mf.read_text().splitlines():
+    for line in mf.read_text(encoding='utf-8').splitlines():
         m=re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\(\)\{',line)
         if m: module_fns.add(m.group(1))
 dispatch_line=next(i for i,l in enumerate(lines,1) if l.strip()=='case "$MODE" in' and i>1800)
@@ -59,12 +61,12 @@ for i,line in enumerate(lines,1):
 # CLI help/dispatch parity
 h=set(re.findall(r'^\s*(--[a-z0-9-]+)',src,re.M)); d=set(re.findall(r'^\s*(--[a-z0-9-]+)\)',src,re.M)); assert h==d,(h-d,d-h)
 # RPC method/ACL parity
-uc=(root/'luci-app-universal-openwrt/root/usr/share/rpcd/ucode/luci.universal_openwrt').read_text()
+uc=(root/'luci-app-universal-openwrt/root/usr/share/rpcd/ucode/luci.universal_openwrt').read_text(encoding='utf-8')
 methods=set(re.findall(r'(?:^|,|\n)\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*\{args:',uc,re.M))
-a=json.loads((root/'luci-app-universal-openwrt/root/usr/share/rpcd/acl.d/luci-app-universal-openwrt.json').read_text())['luci-app-universal-openwrt']; r=set(a['read']['ubus']['universal_openwrt']); w=set(a['write']['ubus']['universal_openwrt']); assert not ((r|w)-methods),sorted((r|w)-methods); assert not (methods-(r|w)),sorted(methods-(r|w))
+a=json.loads((root/'luci-app-universal-openwrt/root/usr/share/rpcd/acl.d/luci-app-universal-openwrt.json').read_text(encoding='utf-8'))['luci-app-universal-openwrt']; r=set(a['read']['ubus']['universal_openwrt']); w=set(a['write']['ubus']['universal_openwrt']); assert not ((r|w)-methods),sorted((r|w)-methods); assert not (methods-(r|w)),sorted(methods-(r|w))
 # manifests + hashes + core package contents
 for fmt in ['ipk','apk']:
- m=json.loads((root/'assets'/fmt/'manifest.json').read_text()); assert m['version']==V
+ m=json.loads((root/'assets'/fmt/'manifest.json').read_text(encoding='utf-8')); assert m['version']==V
  for p in m['packages']:
   f=root/'assets'/fmt/p['file']; assert f.is_file() and f.stat().st_size==p['bytes']; assert hashlib.sha256(f.read_bytes()).hexdigest()==p['sha256']
   if fmt=='ipk':

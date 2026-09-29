@@ -1,0 +1,17 @@
+# id	label	web_domains	api_domains	auth_domains	streaming	http3	geo_sensitive	class
+openai	OpenAI / ChatGPT	chatgpt.com,www.chatgpt.com,openai.com,platform.openai.com	api.openai.com,auth0.openai.com	auth.openai.com	1	1	1	ai
+anthropic	Anthropic / Claude	claude.ai,www.claude.ai,claude.com	api.anthropic.com	claude.ai	1	1	1	ai
+google-gemini	Google Gemini	gemini.google.com,ai.google.dev	generativelanguage.googleapis.com	accounts.google.com	1	1	1	ai
+kimi	Kimi / Moonshot	kimi.com,moonshot.cn	api.moonshot.cn	kimi.com	1	1	1	ai
+deepseek	DeepSeek	deepseek.com,chat.deepseek.com	api.deepseek.com	chat.deepseek.com	1	1	1	ai
+perplexity	Perplexity	perplexity.ai,www.perplexity.ai	api.perplexity.ai	perplexity.ai	1	1	1	ai
+mistral	Mistral	mistral.ai,chat.mistral.ai	api.mistral.ai	chat.mistral.ai	1	1	1	ai
+grok	Grok / xAI	grok.com,x.ai,grok.x.com	api.x.ai	grok.com	1	1	1	ai
+copilot	Microsoft Copilot	copilot.microsoft.com	copilot.microsoft.com	login.microsoftonline.com	1	1	1	ai
+huggingface	Hugging Face	huggingface.co,hf.co	api-inference.huggingface.co	huggingface.co	1	1	0	ai
+poe	Poe	poe.com	api.poe.com	poe.com	1	1	1	ai
+cohere	Cohere	cohere.com	api.cohere.com	dashboard.cohere.com	1	1	0	ai
+openrouter	OpenRouter	openrouter.ai,www.openrouter.ai	openrouter.ai,api.openrouter.ai	openrouter.ai	1	1	1	ai
+youtube	YouTube	www.youtube.com,youtube.com,youtubei.googleapis.com,i.ytimg.com,ytimg.com,googlevideo.com	youtubei.googleapis.com	accounts.google.com	1	1	0	video
+instagram	Instagram	www.instagram.com,instagram.com,cdninstagram.com,graph.instagram.com	graph.instagram.com	www.instagram.com	1	1	1	social
+x	X / Twitter	x.com,www.x.com,twitter.com,www.twitter.com,t.co,abs.twimg.com,pbs.twimg.com	api.x.com	x.com	1	1	1	social

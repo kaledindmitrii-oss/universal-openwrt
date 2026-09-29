@@ -2,7 +2,7 @@
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src/universal-openwrt"
-python3 - "$SRC" <<'PY'
+python - "$SRC" <<'PY'
 import re,sys
 from pathlib import Path
 p=Path(sys.argv[1]); s=p.read_text(); lines=s.splitlines()
@@ -17,12 +17,12 @@ for i,l in enumerate(lines,1):
 idx=next(i for i,l in enumerate(lines) if l.startswith('resource_matrix_build_candidate(){'))
 assert 'resource_matrix_init || return 1' in '\n'.join(lines[idx:idx+5])
 # Top-level cleanup trap must not be overwritten by nested controller functions.
-assert sum('trap ' in l and 'EXIT' in l for l in lines) == 1
+assert sum(1 for l in lines if l.strip().startswith('trap ') and 'EXIT' in l) == 1
 # Locks must use PID ownership and explicit unlock, avoiding stale locks and trap clobbering.
 for name,token in [('strategy','STRATEGY_CHANGE_LOCK'),('resource','RESOURCE_BENCH_LOCK'),('predictive','PRED_LOCK'),('vpn','VPN_MONITOR_LOCK')]:
     assert token in s, name
-assert 'strategy_change_unlock' in s and 'rm -f "$RESOURCE_BENCH_LOCK"' in s
-assert 'predictive_unlock' in s and 'rm -f "$VPN_MONITOR_LOCK"' in s
+assert 'strategy_change_unlock' in s and 'rm -rf "${RESOURCE_BENCH_LOCK}.d"' in s
+assert 'predictive_unlock' in s and 'rm -rf "$VPN_MONITOR_LOCK"' in s
 # Dry-run must terminate before backup/backend/module mutation and real install must fail early without a pinned backend.
 install=s.index('  install)')
 dry=s.index("log 'DRY-RUN: no configuration", install)

@@ -8,7 +8,7 @@ After the tag is pushed, `.github/workflows/release.yml` builds and validates IP
 
 ## Windows
 
-1. Extract `universal-openwrt-v30.2.16.zip`.
+1. Extract `universal-openwrt-v30.2.19.zip`.
 2. Open PowerShell in the extracted project directory.
 3. Run:
 
@@ -23,16 +23,16 @@ The GitHub account used by Git Credential Manager must have write access to `kal
 
 The workflow publishes:
 
-- `universal-openwrt-v30.2.16.tar.gz`
-- `universal-openwrt-v30.2.16.zip`
-- `universal-openwrt_30.2.16-1_all.ipk`
-- `luci-app-universal-openwrt_30.2.16-1_all.ipk`
-- `universal-openwrt-30.2.16-r1.apk`
-- `luci-app-universal-openwrt-30.2.16-r1.apk`
+- `universal-openwrt-v30.2.19.tar.gz`
+- `universal-openwrt-v30.2.19.zip`
+- `universal-openwrt_30.2.19-1_all.ipk`
+- `luci-app-universal-openwrt_30.2.19-1_all.ipk`
+- `universal-openwrt-30.2.19-r1.apk`
+- `luci-app-universal-openwrt-30.2.19-r1.apk`
 - `release-manifest.json`
 - `SHA256SUMS`
 
-The bootstrap installer selects IPK on OpenWrt 24.10.2+ and APK on OpenWrt 25.12.x, then verifies SHA256 before installation.
+The bootstrap installer selects IPK on OpenWrt 24.10.8 and APK on OpenWrt 25.12.x, then verifies SHA256 before installation.
 
 ## Bootstrap
 

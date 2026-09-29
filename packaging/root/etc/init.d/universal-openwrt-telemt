@@ -1,0 +1,19 @@
+#!/bin/sh /etc/rc.common
+START=97
+STOP=08
+USE_PROCD=1
+
+start_service(){
+  [ -f /etc/universal-openwrt/telegram-controller.conf ] && grep -q '^enabled=1$' /etc/universal-openwrt/telegram-controller.conf && return 0
+  . /usr/lib/universal-openwrt/telemt.sh 2>/dev/null || return 0
+  telemt_load || return 0
+  [ "$TELEMT_ENABLED" = 1 ] || return 0
+  [ -x "$TELEMT_BIN" ] || return 0
+  telemt_write_config || return 0
+  procd_open_instance
+  procd_set_param command "$TELEMT_BIN" "$TELEMT_CFG"
+  procd_set_param respawn 3600 5 5
+  procd_set_param stdout 1
+  procd_set_param stderr 1
+  procd_close_instance
+}

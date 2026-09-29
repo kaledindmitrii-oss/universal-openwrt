@@ -1,12 +1,12 @@
-# Universal OpenWrt v30 - optimized adaptive OpenWrt manager
 #!/bin/sh
-# Universal OpenWrt v30.2.15
+# Universal OpenWrt v30 - optimized adaptive OpenWrt manager
+# Universal OpenWrt v30.2.19
 # Capability-driven wrapper for the open-routerich backend.
 # Safe defaults: detect -> backup -> compatibility plan -> install -> health-check.
 # Does not blindly install kernel modules or overwrite unknown UCI sections.
 
 set -u
-VERSION='30.2.16'
+VERSION='30.2.19'
 BASE='/tmp/universal-openwrt'
 BACKUP_BASE='/root/universal-openwrt-backups'
 LOG='/root/universal-openwrt.log'
@@ -22,6 +22,8 @@ TUNNEL_ADDRESS=''
 TUNNEL_PORT='443'
 TUNNEL_UUID=''
 TUNNEL_SERVERNAME=''
+TGCTL_ARG1=''; TGCTL_ARG2=''; TGCTL_ARG3=''; TGCTL_ARG4=''; TGCTL_ARG5=''
+SERVICE_MODULE_NAME=''
 SPEED='standard'
 VPN_MODE='split'
 RESOURCE_CACHE_TTL=600
@@ -30,20 +32,38 @@ BASELINE_TIMES="$BASE/baseline-times.txt"
 mkdir -p "$BASE" 2>/dev/null || true
 UOWRT_LIB='/usr/lib/universal-openwrt'
 SCRIPT_LIB_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../modules" 2>/dev/null && pwd || true)"
-for _uowrt_lib in "$SCRIPT_LIB_DIR/strategy-engine.sh" "$SCRIPT_LIB_DIR/tunnel-engine.sh"; do
+for _uowrt_lib in "$SCRIPT_LIB_DIR/source-resolver.sh" "$SCRIPT_LIB_DIR/strategy-engine.sh" "$SCRIPT_LIB_DIR/tunnel-engine.sh" "$SCRIPT_LIB_DIR/ai-access-engine.sh" "$SCRIPT_LIB_DIR/automation.sh" "$SCRIPT_LIB_DIR/resource-monitor.sh" "$SCRIPT_LIB_DIR/telegram-controller.sh" "$SCRIPT_LIB_DIR/service-modules.sh"; do
   [ -f "$_uowrt_lib" ] && . "$_uowrt_lib"
 done
+if [ ! -f "$SCRIPT_LIB_DIR/source-resolver.sh" ]; then
+  [ -f "$UOWRT_LIB/source-resolver.sh" ] && . "$UOWRT_LIB/source-resolver.sh"
+fi
 if [ ! -f "$SCRIPT_LIB_DIR/strategy-engine.sh" ]; then
   [ -f "$UOWRT_LIB/strategy-engine.sh" ] && . "$UOWRT_LIB/strategy-engine.sh"
 fi
 if [ ! -f "$SCRIPT_LIB_DIR/tunnel-engine.sh" ]; then
   [ -f "$UOWRT_LIB/tunnel-engine.sh" ] && . "$UOWRT_LIB/tunnel-engine.sh"
 fi
+if [ ! -f "$SCRIPT_LIB_DIR/ai-access-engine.sh" ]; then
+  [ -f "$UOWRT_LIB/ai-access-engine.sh" ] && . "$UOWRT_LIB/ai-access-engine.sh"
+fi
+if [ ! -f "$SCRIPT_LIB_DIR/automation.sh" ]; then
+  [ -f "$UOWRT_LIB/automation.sh" ] && . "$UOWRT_LIB/automation.sh"
+fi
+if [ ! -f "$SCRIPT_LIB_DIR/resource-monitor.sh" ]; then
+  [ -f "$UOWRT_LIB/resource-monitor.sh" ] && . "$UOWRT_LIB/resource-monitor.sh"
+fi
+if [ ! -f "$SCRIPT_LIB_DIR/telegram-controller.sh" ]; then
+  [ -f "$UOWRT_LIB/telegram-controller.sh" ] && . "$UOWRT_LIB/telegram-controller.sh"
+fi
+if [ ! -f "$SCRIPT_LIB_DIR/service-modules.sh" ]; then
+  [ -f "$UOWRT_LIB/service-modules.sh" ] && . "$UOWRT_LIB/service-modules.sh"
+fi
 touch "$LOG" 2>/dev/null || LOG="$BASE/run.log"
 
 modules_self_check(){
   local missing=0 f
-  for f in strategy-engine.sh tunnel-engine.sh tg-ws-proxy.sh; do
+  for f in source-resolver.sh strategy-engine.sh tunnel-engine.sh tg-ws-proxy.sh tg-socks5-go.sh telegram-controller.sh telemt.sh wireguard-remote.sh ai-access-engine.sh automation.sh resource-monitor.sh service-modules.sh; do
     if [ ! -f "$UOWRT_LIB/$f" ] && [ ! -f "$SCRIPT_LIB_DIR/$f" ]; then
       log "ERROR: runtime module missing: $f"
       missing=1
@@ -61,6 +81,9 @@ trap cleanup_tmp EXIT
 log(){ printf '[%s] %s\n' "$(date '+%F %T' 2>/dev/null || echo now)" "$*" | tee -a "$LOG"; }
 die(){ log "ERROR: $*"; exit 1; }
 have(){ command -v "$1" >/dev/null 2>&1; }
+github_preflight(){
+  if command -v uowrt_github_status >/dev/null 2>&1; then uowrt_github_status >/tmp/uowrt-github-status.$$ 2>/dev/null || true; cat /tmp/uowrt-github-status.$$ 2>/dev/null || true; rm -f /tmp/uowrt-github-status.$$ 2>/dev/null || true; else echo 'github_status=not_checked'; fi
+}
 run(){ log "+ $*"; [ "$DRY" = 1 ] && return 0; "$@"; }
 
 get_uci(){ uci -q get "$1" 2>/dev/null || true; }
@@ -83,6 +106,14 @@ detect(){
   TARGET="${TARGET:-${DISTRIB_TARGET:-unknown}}"
   ARCH="${ARCH:-${DISTRIB_ARCH:-$(uname -m 2>/dev/null || echo unknown)}}"
   KERNEL="$(uname -r 2>/dev/null || echo unknown)"
+  KERNEL_ABI=""
+  if [ "$PM" = opkg ] && have opkg; then
+    KERNEL_ABI="$(opkg status kernel 2>/dev/null | sed -n 's/^Version: //p' | head -n1)"
+  elif [ "$PM" = apk ] && have apk; then
+    KERNEL_ABI="$(apk policy kernel 2>/dev/null | sed -n 's/.*[[:space:]]\([0-9][^[:space:]]*\).*/\1/p' | head -n1)"
+  fi
+  [ -n "$KERNEL_ABI" ] || KERNEL_ABI="$KERNEL"
+  KERNEL_RELEASE="$KERNEL"
   if have apk; then PM=apk; elif have opkg; then PM=opkg; else PM=none; fi
   if have fw4; then FW=fw4; elif have nft; then FW=nft; else FW=unknown; fi
   if have nft; then NFT=1; else NFT=0; fi
@@ -122,6 +153,7 @@ show(){
   log "Target=$TARGET"
   log "Arch=$ARCH"
   log "Kernel=$KERNEL"
+  log "KernelABI=$KERNEL_ABI"
   log "PackageManager=$PM"
   log "Firewall=$FW"
   log "LAN=${LAN_DEV:-unknown} WAN=${WAN_DEV:-unknown} DEFAULT_IF=${DEFAULT_IF:-unknown}"
@@ -180,6 +212,8 @@ plan(){
   log "  DPI module        : $CAP_DPI"
   log "  geo/DNS module    : $CAP_MALW"
   log "  AmneziaWG ready   : $CAP_AWG"
+  log "  Kernel ABI        : ${KERNEL_ABI:-unknown}"
+  log "  Target tuple      : ${TARGET:-unknown} / ${ARCH:-unknown}"
   log "  Podkop candidate  : $CAP_PODKOP"
   log "  Proxy candidate   : $CAP_PROXY"
   log 'Rule: a kernel module is never considered installable from CPU architecture alone.'
@@ -763,8 +797,10 @@ awg_apply_routing(){
   [ -n "$(uci -q get "network.$IFACE.proto" 2>/dev/null)" ] || die "AWG interface $IFACE is not configured"
   # Keep the tunnel endpoint reachable through WAN while routing client traffic via AWG.
   # netifd handles the endpoint route; we only enable allowed-IPs routing here.
-  PEER="$(uci show network 2>/dev/null | sed -n "s/^network\.\(@[^=]*\)\.public_key=.*/\1/p" | tail -n 1)"
-  [ -n "$PEER" ] || PEER="@wireguard_${IFACE}[-1]"
+  PEER="$(uci show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\)=amneziawg_${IFACE}$/\1/p" | tail -n 1)"
+  PEER_TYPE=amneziawg
+  if [ -z "$PEER" ]; then PEER="$(uci show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\)=wireguard_${IFACE}$/\1/p" | tail -n 1)"; PEER_TYPE=wireguard; fi
+  [ -n "$PEER" ] || PEER="@${PEER_TYPE}_${IFACE}[-1]"
   uci set "network.${PEER}.allowed_ips=0.0.0.0/0" 2>/dev/null || true
   uci set "network.${PEER}.route_allowed_ips=1" 2>/dev/null || true
   uci set "network.$IFACE.nohostroute=0" 2>/dev/null || true
@@ -811,7 +847,7 @@ vpn_profile_list(){
   vpn_profiles_init || return 1
   log "VPN profiles:"
   if [ ! -s "$VPN_PROFILE_FILE" ]; then log '  (none)'; return 0; fi
-  awk -F'|' '{printf "  %-20s %-7s %-8s %-s\\n",$1,$2,$3,$4}' "$VPN_PROFILE_FILE"
+  awk -F'|' '{printf "  %-20s %-7s %-8s %-s\n",$1,$2,$3,$4}' "$VPN_PROFILE_FILE"
 }
 vpn_profile_save(){
   NAME="$1"; MODE="$2"; IFACE="${3:-awg10}"; DESC="${4:-AWG/WARP profile}"
@@ -820,7 +856,7 @@ vpn_profile_save(){
   vpn_profiles_init || die 'cannot create profile database'
   TMP="$VPN_PROFILE_FILE.tmp.$$"
   awk -F'|' -v n="$NAME" '$1 != n' "$VPN_PROFILE_FILE" 2>/dev/null > "$TMP" || true
-  printf '%s|%s|%s|%s\\n' "$NAME" "$MODE" "$IFACE" "$(printf '%s' "$DESC" | tr '|\\n' '  ')" >> "$TMP"
+  printf '%s|%s|%s|%s\n' "$NAME" "$MODE" "$IFACE" "$(printf '%s' "$DESC" | tr '|\\n' '  ')" >> "$TMP"
   mv "$TMP" "$VPN_PROFILE_FILE"
 }
 vpn_profile_delete(){
@@ -844,6 +880,12 @@ vpn_profile_activate(){
   sleep 1
   if ip link show "$IFACE" >/dev/null 2>&1; then
     log "VPN profile '$NAME': interface present"
+    if [ "$NEW" = full ] && ! vpn_health "$IFACE" | grep -q 'vpn_access=PASS'; then
+      log "VPN profile '$NAME': health gate failed; refusing activation"
+      VPN_MODE="$OLD"
+      vpn_profile_restore_state "$OLD_NAME" "$OLD_MODE" "$OLD_IFACE" 2>/dev/null || true
+      return 1
+    fi
     vpn_profile_active_set "$NAME"
   else
     VPN_MODE="$OLD"; return 1
@@ -979,12 +1021,36 @@ vpn_profile_auto_select(){
 }
 
 
+# ---------- VPN health engine ----------
+vpn_health(){
+  IFACE="${1:-${AWG_IFACE:-awg10}}"
+  printf 'VPN health: interface=%s\n' "$IFACE"
+  ip link show "$IFACE" >/dev/null 2>&1 && printf 'interface=PASS\n' || printf 'interface=FAIL\n'
+  HS=''; RX=''; TX=''
+  if have awg && awg show "$IFACE" latest-handshakes >/dev/null 2>&1; then
+    HS="$(awg show "$IFACE" latest-handshakes 2>/dev/null | awk '$2>0{print $2}' | tail -n1)"
+    RX="$(awg show "$IFACE" transfer 2>/dev/null | awk 'NR==1{print $2}')"
+    TX="$(awg show "$IFACE" transfer 2>/dev/null | awk 'NR==1{print $3}')"
+  elif have wg && wg show "$IFACE" latest-handshakes >/dev/null 2>&1; then
+    HS="$(wg show "$IFACE" latest-handshakes 2>/dev/null | awk '$2>0{print $2}' | tail -n1)"
+    RX="$(wg show "$IFACE" transfer 2>/dev/null | awk 'NR==1{print $2}')"
+    TX="$(wg show "$IFACE" transfer 2>/dev/null | awk 'NR==1{print $3}')"
+  fi
+  [ -n "$HS" ] && printf 'handshake=PASS\n' || printf 'handshake=FAIL\n'
+  printf 'last_handshake=%s\nrx=%s\ntx=%s\n' "${HS:-0}" "${RX:-0}" "${TX:-0}"
+  ip route 2>/dev/null | grep -q '^default ' && printf 'default_route=PASS\n' || printf 'default_route=FAIL\n'
+  nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1 && printf 'dns=PASS\n' || printf 'dns=FAIL\n'
+  ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1 && printf 'ipv4_internet=PASS\n' || printf 'ipv4_internet=FAIL\n'
+  if have ping6; then ping6 -c 1 -W 3 2606:4700:4700::1111 >/dev/null 2>&1 && printf 'ipv6_internet=PASS\n' || printf 'ipv6_internet=FAIL\n'; else printf 'ipv6_internet=UNKNOWN\n'; fi
+  if [ -n "$HS" ] && [ "${RX:-0}" != 0 ] && [ "${TX:-0}" != 0 ]; then printf 'vpn_access=PASS\n'; else printf 'vpn_access=INCONCLUSIVE\n'; fi
+}
+
 # ---------- continuous VPN quality monitor ----------
 VPN_MONITOR_DIR='/etc/universal-openwrt'
 VPN_MONITOR_CFG="$VPN_MONITOR_DIR/monitor.conf"
 VPN_MONITOR_STATE="$VPN_MONITOR_DIR/monitor.state"
 VPN_MONITOR_LOG='/root/universal-openwrt-vpn-monitor.log'
-VPN_MONITOR_LOCK='/var/run/universal-openwrt-v21-monitor.lock'
+VPN_MONITOR_LOCK='/var/run/universal-openwrt-v21-monitor.lock.d'
 
 vpn_monitor_init(){
   mkdir -p "$VPN_MONITOR_DIR" "$VPN_PROFILES_DIR" 2>/dev/null || return 1
@@ -1064,16 +1130,19 @@ vpn_monitor_switch_best(){
 vpn_monitor_run(){
   vpn_monitor_init || return 1
   [ "$(vpn_monitor_cfg enabled)" = 1 ] || { vpn_monitor_log 'cycle skipped: disabled'; return 0; }
-  if [ -e "$VPN_MONITOR_LOCK" ]; then
-    _lock_pid="$(cat "$VPN_MONITOR_LOCK" 2>/dev/null || true)"
+  if mkdir "$VPN_MONITOR_LOCK" 2>/dev/null; then
+    printf '%s\n' "$$" >"$VPN_MONITOR_LOCK/pid"
+  else
+    _lock_pid="$(cat "$VPN_MONITOR_LOCK/pid" 2>/dev/null || true)"
     case "$_lock_pid" in
-      ''|*[!0-9]*) rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true;;
-      *) kill -0 "$_lock_pid" 2>/dev/null && { vpn_monitor_log 'cycle skipped: lock exists'; return 0; } || rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true;;
+      ''|*[!0-9]*) rm -rf "$VPN_MONITOR_LOCK" 2>/dev/null || true;;
+      *) kill -0 "$_lock_pid" 2>/dev/null && { vpn_monitor_log 'cycle skipped: lock exists'; return 0; } || rm -rf "$VPN_MONITOR_LOCK" 2>/dev/null || true;;
     esac
+    mkdir "$VPN_MONITOR_LOCK" 2>/dev/null || { vpn_monitor_log 'cycle skipped: lock exists'; return 0; }
+    printf '%s\n' "$$" >"$VPN_MONITOR_LOCK/pid"
   fi
-  printf '%s\n' "$$" > "$VPN_MONITOR_LOCK"
-  vpn_profiles_init || { rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true; return 0; }
-  [ -s "$VPN_PROFILE_FILE" ] || { vpn_monitor_log 'cycle skipped: no profiles'; rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true; return 0; }
+  vpn_profiles_init || { rm -rf "$VPN_MONITOR_LOCK" 2>/dev/null || true; return 0; }
+  [ -s "$VPN_PROFILE_FILE" ] || { vpn_monitor_log 'cycle skipped: no profiles'; rm -rf "$VPN_MONITOR_LOCK" 2>/dev/null || true; return 0; }
   ACTIVE="$(vpn_profile_active_get)"
   if [ -z "$ACTIVE" ]; then ACTIVE="$(vpn_monitor_state_get preferred)"; fi
   if [ -z "$ACTIVE" ]; then ACTIVE="$(awk -F'|' 'NR==1{print $1}' "$VPN_PROFILE_FILE")"; vpn_profile_activate "$ACTIVE" >/dev/null 2>&1 || true; vpn_profile_active_set "$ACTIVE"; fi
@@ -1097,7 +1166,7 @@ vpn_monitor_run(){
     AR="$(awk -F'\t' -v p="$ACTIVE" '$1==p{print $2+0;exit}' "$VPN_PROFILE_BENCH_DIR/ranking.sorted.tsv" 2>/dev/null || echo 999999)"
     if [ "$FS" -lt $((AR-100)) ]; then vpn_profile_activate "$FAILED" >/dev/null 2>&1 && vpn_profile_active_set "$FAILED" && vpn_monitor_state_set last_switch "$NOW" && vpn_monitor_state_set failed_preferred '' && vpn_monitor_log "recovered preferred profile=$FAILED"; fi
   fi
-  rm -f "$VPN_MONITOR_LOCK" 2>/dev/null || true
+  rm -rf "$VPN_MONITOR_LOCK" 2>/dev/null || true
 }
 
 # ---------- resource matrix + per-resource benchmark ----------
@@ -1121,6 +1190,9 @@ TG_TABLE='1061'
 TGWS_MODULE="$UOWRT_LIB/tg-ws-proxy.sh"
 [ -f "$TGWS_MODULE" ] || TGWS_MODULE="$SCRIPT_LIB_DIR/tg-ws-proxy.sh"
 [ -f "$TGWS_MODULE" ] && . "$TGWS_MODULE"
+TELEMT_MODULE="$UOWRT_LIB/telemt.sh"
+[ -f "$TELEMT_MODULE" ] || TELEMT_MODULE="$SCRIPT_LIB_DIR/telemt.sh"
+[ -f "$TELEMT_MODULE" ] && . "$TELEMT_MODULE" 2>/dev/null || true
 TGGO_MODULE="$UOWRT_LIB/tg-socks5-go.sh"
 [ -f "$TGGO_MODULE" ] || TGGO_MODULE="$SCRIPT_LIB_DIR/tg-socks5-go.sh"
 [ -f "$TGGO_MODULE" ] && . "$TGGO_MODULE"
@@ -1162,12 +1234,13 @@ EOL
   [ -f "$RESOURCE_DIR/streaming.lst" ] || printf '%s\n' netflix.com spotify.com soundcloud.com sndcdn.com primevideo.com hbomax.com crunchyroll.com deezer.com qobuz.com >"$RESOURCE_DIR/streaming.lst"
   [ -f "$RESOURCE_DIR/gaming.lst" ] || printf '%s\n' steam.com steampowered.com steamcommunity.com steamstat.info epicgames.com supercell.com clashofclans.com clashroyaleapp.com >"$RESOURCE_DIR/gaming.lst"
   [ -f "$RESOURCE_DIR/news.lst" ] || printf '%s\n' bbc.com bbc.co.uk dw.com meduza.io themoscowtimes.com rferl.org svoboda.org radiosvoboda.org currenttime.tv reuters.com >"$RESOURCE_DIR/news.lst"
-  [ -f "$RESOURCE_DIR/russia-inside.lst" ] || resource_matrix_remote_update >/dev/null 2>&1 || true
+  # Remote resource refresh is explicit; initialization never performs network I/O.
 }
 resource_matrix_remote_update(){
   mkdir -p "$RESOURCE_DIR" 2>/dev/null || return 1
   U="$RESOURCE_REPO_RAW/Russia/inside-raw.lst"; T="$RESOURCE_DIR/.inside.$$"
-  if have wget; then wget -q -T 10 -O "$T" "$U" 2>/dev/null || return 1
+  if command -v uowrt_fetch >/dev/null 2>&1; then uowrt_fetch "$T" "$U" || return 1
+  elif have wget; then wget -q -T 10 -O "$T" "$U" 2>/dev/null || return 1
   elif have curl; then curl -L -sS --connect-timeout 5 --max-time 15 -o "$T" "$U" 2>/dev/null || return 1
   else return 1; fi
   sed 's/\r//g;s/#.*$//' "$T" | awk 'NF{gsub(/^\*+\./,"");gsub(/^\.+/,"");print tolower($0)}' | grep -E '^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$' | sort -u >"$RESOURCE_DIR/russia-inside.lst"
@@ -1216,19 +1289,31 @@ strategy_capability(){
 }
 STRATEGY_CHANGE_LOCK='/var/run/universal-openwrt-strategy-change.lock'
 strategy_change_lock(){
-  if [ -e "$STRATEGY_CHANGE_LOCK" ]; then
-    _lock_pid="$(cat "$STRATEGY_CHANGE_LOCK" 2>/dev/null || true)"
-    case "$_lock_pid" in
-      ''|*[!0-9]*) rm -f "$STRATEGY_CHANGE_LOCK" 2>/dev/null || true;;
-      *) kill -0 "$_lock_pid" 2>/dev/null && return 1 || rm -f "$STRATEGY_CHANGE_LOCK" 2>/dev/null || true;;
-    esac
+  _lock_dir="${STRATEGY_CHANGE_LOCK}.d"
+  if mkdir "$_lock_dir" 2>/dev/null; then
+    printf '%s\n' "$$" >"$_lock_dir/pid"
+    return 0
   fi
-  printf '%s\n' "$$" > "$STRATEGY_CHANGE_LOCK"
+  _lock_pid="$(cat "$_lock_dir/pid" 2>/dev/null || true)"
+  case "$_lock_pid" in
+    ''|*[!0-9]*) rm -rf "$_lock_dir" 2>/dev/null || true;;
+    *) if kill -0 "$_lock_pid" 2>/dev/null; then return 1; else rm -rf "$_lock_dir" 2>/dev/null || true; fi;;
+  esac
+  mkdir "$_lock_dir" 2>/dev/null || return 1
+  printf '%s\n' "$$" >"$_lock_dir/pid"
   return 0
 }
-strategy_change_unlock(){ rm -f "$STRATEGY_CHANGE_LOCK" 2>/dev/null || true; }
+strategy_change_unlock(){ rm -rf "${STRATEGY_CHANGE_LOCK}.d" 2>/dev/null || true; }
+# Legacy CLI aliases are accepted for compatibility but map to the single generic DPI backend.
 strategy_apply(){
-  strategy_change_lock || { log 'Strategy change already in progress; refusing concurrent mutation'; return 3; }
+  # Manual and automatic strategy changes share one mutation gate.
+  # The gate is re-entrant for a controller already holding it.
+  _strategy_controller_owner=0
+  if [ "${UOWRT_CONTROLLER_OWNER:-0}" != "$$" ]; then
+    controller_lock || { log 'Another controller is changing strategy; refusing concurrent mutation'; return 3; }
+    _strategy_controller_owner=1
+  fi
+  strategy_change_lock || { [ "$_strategy_controller_owner" -eq 1 ] && controller_unlock; log 'Strategy change already in progress; refusing concurrent mutation'; return 3; }
   _strategy_rc=0
   case "$1" in
     tg-socks5) tggo_enable || _strategy_rc=$?;;
@@ -1238,8 +1323,11 @@ strategy_apply(){
       elif ! run_module_verified dpi-desync try; then _strategy_rc=$?; fi
       ;;
     awg-split)
-      module_preflight awg-warp || _strategy_rc=2
-      if [ "$_strategy_rc" -eq 0 ]; then VPN_MODE=split; AWG_IFACE=awg10; awg_auto_setup || _strategy_rc=$?; fi
+      # AWG interface preparation is supported, but this project does not yet
+      # own a domain/policy-routing classifier for split tunnelling. Never
+      # report a no-routing interface as an active bypass strategy.
+      log 'AWG split strategy is unavailable: no owned policy-routing classifier'
+      _strategy_rc=2
       ;;
     awg-full)
       module_preflight awg-warp || _strategy_rc=2
@@ -1263,11 +1351,12 @@ strategy_apply(){
     *) _strategy_rc=2;;
   esac
   strategy_change_unlock
+  if [ "$_strategy_controller_owner" -eq 1 ]; then controller_unlock; fi
   return "$_strategy_rc"
 }
 
-strategy_for_class(){ case "$1" in telegram) if tggo_running 2>/dev/null; then echo tg-socks5; elif tgws_configured 2>/dev/null; then echo tg-ws; else echo core; fi;; video) echo dpi-youtube-auto;; discord) echo dpi-discord;; gaming) echo dpi-game;; social-video) echo dpi-youtube-auto;; social|ai|developer|streaming|news) echo awg-split;; *) echo core;; esac; }
-strategy_fallback_for_class(){ case "$1" in telegram) if tgws_configured 2>/dev/null; then echo tg-ws; else echo core; fi;; video|social-video|discord|gaming) echo awg-split;; *) echo core;; esac; }
+strategy_for_class(){ case "$1" in telegram) if tggo_running 2>/dev/null; then echo tg-socks5; elif tgws_configured 2>/dev/null; then echo tg-ws; else echo core; fi;; video|discord|gaming|social-video) echo dpi;; social|ai) echo dpi;; developer|streaming|news) echo awg-full;; *) echo core;; esac; }
+strategy_fallback_for_class(){ case "$1" in telegram) if tgws_configured 2>/dev/null; then echo tg-ws; else echo core; fi;; video|social-video|discord|gaming) echo awg-full;; *) echo core;; esac; }
 # Resolve a resource from the learned policy first, then fall back to the class policy.
 # This keeps the decision automatic while avoiding a static one-size-fits-all mapping.
 strategy_for_resource(){
@@ -1278,11 +1367,11 @@ strategy_for_resource(){
   fi
   strategy_for_class "$C"
 }
-strategy_candidates_for_class(){ case "$1" in telegram) printf '%s\n' tg-socks5 tg-ws core;; video|social-video) printf '%s\n' dpi-youtube-auto dpi awg-split awg-full;; discord) printf '%s\n' dpi-discord dpi awg-split;; gaming) printf '%s\n' dpi-game dpi awg-split;; social) printf '%s\n' dpi awg-split awg-full;; ai|developer|streaming|news) printf '%s\n' awg-split dpi awg-full;; *) printf '%s\n' core dns dpi awg-split;; esac; }
+strategy_candidates_for_class(){ case "$1" in telegram) printf '%s\n' tg-socks5 tg-ws core;; video|social-video|discord|gaming) printf '%s\n' dpi awg-full;; social) printf '%s\n' dpi awg-full;; ai) printf '%s\n' dpi proxy awg-full;; developer|streaming|news) printf '%s\n' awg-full dpi proxy;; *) printf '%s\n' core dns dpi awg-full;; esac; }
 
 zapret_source_update(){
   mkdir -p "$ZAPRET_SOURCE_DIR" 2>/dev/null || return 1
-  fetch_url(){ U="$1"; O="$2"; if have wget; then wget -q -T 12 -O "$O" "$U" 2>/dev/null; elif have curl; then curl -L -sS --connect-timeout 5 --max-time 15 -o "$O" "$U" 2>/dev/null; else return 1; fi; }
+  fetch_url(){ U="$1"; O="$2"; if command -v uowrt_fetch >/dev/null 2>&1; then uowrt_fetch "$O" "$U" >/dev/null 2>&1; elif have wget; then wget -q -T 12 -O "$O" "$U" 2>/dev/null; elif have curl; then curl -L -sS --connect-timeout 5 --max-time 15 -o "$O" "$U" 2>/dev/null; else return 1; fi; }
   fetch_url "$ZAPRET_STRATEGIES_URL" "$ZAPRET_STRATEGIES_FILE.tmp" || return 1
   fetch_url "$ZAPRET_YOUTUBE_STRATEGIES_URL" "$ZAPRET_YOUTUBE_FILE.tmp" || return 1
   mv "$ZAPRET_STRATEGIES_FILE.tmp" "$ZAPRET_STRATEGIES_FILE"; mv "$ZAPRET_YOUTUBE_FILE.tmp" "$ZAPRET_YOUTUBE_FILE"
@@ -1418,6 +1507,9 @@ ADAPT_DIR='/etc/universal-openwrt/adaptive'
 ADAPT_HISTORY="$ADAPT_DIR/history.tsv"
 ADAPT_STATE="$ADAPT_DIR/state"
 ADAPT_LOCK='/var/run/universal-openwrt-adaptive.lock'
+# Single mutation gate shared by adaptive/resource/service/AI controllers.
+# This prevents snapshot/restore races between independent automatic selectors.
+UOWRT_CONTROLLER_LOCK='/var/run/universal-openwrt-controller.lock.d'
 
 adaptive_init(){
   mkdir -p "$ADAPT_DIR/snapshots" "$ADAPT_DIR/cache" 2>/dev/null || return 1
@@ -1425,8 +1517,38 @@ adaptive_init(){
 }
 adaptive_state_get(){ adaptive_init || return 1; awk -F= -v k="$1" '$1==k{print substr($0,index($0,"=")+1);exit}' "$ADAPT_STATE" 2>/dev/null; }
 adaptive_state_set(){ adaptive_init || return 1; K="$1"; V="$2"; T="$ADAPT_STATE.tmp.$$"; awk -F= -v k="$K" '$1!=k{print}' "$ADAPT_STATE" 2>/dev/null >"$T" || true; printf '%s=%s\n' "$K" "$V" >>"$T"; mv "$T" "$ADAPT_STATE"; }
-adaptive_lock(){ [ -e "$ADAPT_LOCK" ] && return 1; : > "$ADAPT_LOCK"; return 0; }
-adaptive_unlock(){ rm -f "$ADAPT_LOCK" 2>/dev/null || true; }
+controller_lock(){
+  [ "${UOWRT_CONTROLLER_OWNER:-0}" = "$$" ] && return 0
+  if mkdir "$UOWRT_CONTROLLER_LOCK" 2>/dev/null; then
+    printf '%s\n' "$$" >"$UOWRT_CONTROLLER_LOCK/pid"
+    UOWRT_CONTROLLER_OWNER="$$"
+    return 0
+  fi
+  _controller_pid="$(cat "$UOWRT_CONTROLLER_LOCK/pid" 2>/dev/null || true)"
+  case "$_controller_pid" in
+    ''|*[!0-9]*) rm -rf "$UOWRT_CONTROLLER_LOCK" 2>/dev/null || true;;
+    *) kill -0 "$_controller_pid" 2>/dev/null && return 1 || rm -rf "$UOWRT_CONTROLLER_LOCK" 2>/dev/null || true;;
+  esac
+  mkdir "$UOWRT_CONTROLLER_LOCK" 2>/dev/null || return 1
+  printf '%s\n' "$$" >"$UOWRT_CONTROLLER_LOCK/pid"
+  UOWRT_CONTROLLER_OWNER="$$"
+  return 0
+}
+controller_unlock(){
+  [ "${UOWRT_CONTROLLER_OWNER:-0}" = "$$" ] || return 0
+  rm -rf "$UOWRT_CONTROLLER_LOCK" 2>/dev/null || true
+  UOWRT_CONTROLLER_OWNER=0
+}
+adaptive_lock(){
+  if ! controller_lock; then return 1; fi
+  if mkdir "${ADAPT_LOCK}.d" 2>/dev/null; then
+    printf '%s\n' "$$" >"${ADAPT_LOCK}.d/pid"
+    return 0
+  fi
+  controller_unlock
+  return 1
+}
+adaptive_unlock(){ rm -rf "${ADAPT_LOCK}.d" 2>/dev/null || true; controller_unlock; }
 adaptive_problem_max(){ case "$SPEED" in quick) echo 5;; standard) echo 10;; deep) echo 20;; *) echo 10;; esac; }
 adaptive_stability_max(){ case "$SPEED" in quick) echo 2;; standard) echo 4;; deep) echo 6;; *) echo 4;; esac; }
 adaptive_strategy_cost(){ case "$1" in baseline) echo 0;; core) echo 10;; dns) echo 20;; dpi) echo 30;; awg-split) echo 45;; awg-full) echo 65;; podkop) echo 70;; proxy) echo 80;; tg-socks5) echo 25;; tg-ws) echo 28;; *) echo 100;; esac; }
@@ -1443,7 +1565,13 @@ adaptive_snapshot(){
 }
 adaptive_restore(){
   NAME="$1"; DEST="$ADAPT_DIR/snapshots/$NAME"; [ -d "$DEST" ] || return 1
-  for f in network firewall dhcp system wireless podkop youtubeUnblock https-dns-proxy sing-box; do [ -f "$DEST/$f" ] && cp -p "$DEST/$f" "/etc/config/$f"; done
+  for f in network firewall dhcp system wireless podkop youtubeUnblock https-dns-proxy sing-box; do
+    if [ -f "$DEST/$f" ]; then cp -p "$DEST/$f" "/etc/config/$f";
+    else rm -f "/etc/config/$f" 2>/dev/null || true; fi
+  done
+  if [ -d "$DEST/awg" ]; then rm -rf /etc/universal-openwrt/awg; cp -a "$DEST/awg" /etc/universal-openwrt/awg; else rm -rf /etc/universal-openwrt/awg 2>/dev/null || true; fi
+  if [ -f "$DEST/tg-socks5.conf" ]; then cp -p "$DEST/tg-socks5.conf" "$TGGO_CONF"; else rm -f "$TGGO_CONF" 2>/dev/null || true; fi
+  if [ -f "$DEST/tg-failover.conf" ]; then cp -p "$DEST/tg-failover.conf" "$TG_FAILOVER_CONF"; else rm -f "$TG_FAILOVER_CONF" 2>/dev/null || true; fi
   uci commit 2>/dev/null || true
   /etc/init.d/network reload 2>/dev/null || true
   /etc/init.d/firewall reload 2>/dev/null || true
@@ -1500,15 +1628,33 @@ adaptive_log_result(){
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$STRAT" "$PHASE" "$SCORE" "$BL" "$HF" "$SL" "$OK" "$LAT" "$STAB" "$NOTE" >> "$ADAPT_HISTORY"
   printf '%s\n' "$SCORE"
 }
+adaptive_guard_regressions(){
+  BASEF="$1"; CAND="$2";
+  [ -s "$BASEF" ] && [ -s "$CAND" ] || return 1
+  # Never accept a candidate that breaks a service which was healthy before
+  # the experiment. These are hard guards, independent of aggregate score.
+  for D in openwrt.org cloudflare.com google.com github.com chatgpt.com youtube.com instagram.com x.com; do
+    BS="$(awk -F '\t' -v d="$D" 'NR>1&&$1==d{print $2;exit}' "$BASEF" 2>/dev/null)"
+    [ "$BS" = OK ] || continue
+    CS="$(awk -F '\t' -v d="$D" 'NR>1&&$1==d{print $2;exit}' "$CAND" 2>/dev/null)"
+    case "$CS" in OK) :;; *) log "Guard rejected $CAND: healthy protected service regressed: $D $BS -> ${CS:-MISSING}"; return 1;; esac
+  done
+  return 0
+}
 
 adaptive_candidate_order(){
   SIGNAL="$1"
   case "$SIGNAL" in
-    blocked) printf '%s\n' core dpi awg-split awg-full podkop proxy dns;;
-    https) printf '%s\n' core dpi awg-split awg-full podkop proxy dns;;
-    slow) printf '%s\n' core dns dpi awg-split awg-full podkop proxy;;
-    healthy) printf '%s\n' core;;
-    *) printf '%s\n' core dns dpi awg-split awg-full podkop proxy;;
+    blocked) printf '%s\n' core dpi awg-full podkop proxy dns;;
+    https) printf '%s\n' core dpi awg-full podkop proxy dns;;
+    slow) printf '%s\n' core dns dpi awg-full podkop proxy;;
+    healthy)
+      if [ "${AUTOMATION_FORCE_BENCHMARK:-0}" = 1 ]; then
+        printf '%s\n' core dns dpi awg-full podkop proxy
+      else
+        printf '%s\n' core
+      fi;;
+    *) printf '%s\n' core dns dpi awg-full podkop proxy;;
   esac
 }
 adaptive_capability(){
@@ -1523,6 +1669,34 @@ adaptive_capability(){
     *) return 1;;
   esac
 }
+strategy_stage_verify(){
+  STRAT="$1"
+  log "STAGE-CHECK [$STRAT]: configuration"
+  uci show network >/dev/null 2>&1 || { log "STAGE-CHECK [$STRAT]: network UCI FAIL"; return 1; }
+  uci show firewall >/dev/null 2>&1 || { log "STAGE-CHECK [$STRAT]: firewall UCI FAIL"; return 1; }
+  log "STAGE-CHECK [$STRAT]: routing"
+  ip route 2>/dev/null | grep -q '^default ' || { log "STAGE-CHECK [$STRAT]: default route FAIL"; return 1; }
+  case "$STRAT" in
+    awg-full)
+      IFACE="${AWG_IFACE:-awg10}"
+      ip link show "$IFACE" >/dev/null 2>&1 || { log "STAGE-CHECK [awg-full]: interface $IFACE FAIL"; return 1; }
+      HS=''; if have awg; then HS="$(awg show "$IFACE" latest-handshakes 2>/dev/null | awk '$2>0{print $2}' | tail -n1)"; elif have wg; then HS="$(wg show "$IFACE" latest-handshakes 2>/dev/null | awk '$2>0{print $2}' | tail -n1)"; fi
+      [ -n "$HS" ] || { log 'STAGE-CHECK [awg-full]: handshake FAIL'; return 1; }
+      log 'STAGE-CHECK [awg-full]: handshake PASS'
+      ;;
+    tg-socks5)
+      tggo_running >/dev/null 2>&1 || { log 'STAGE-CHECK [tg-socks5]: local proxy FAIL'; return 1; }
+      ;;
+    tg-ws)
+      tgws_running >/dev/null 2>&1 || { log 'STAGE-CHECK [tg-ws]: WS process FAIL'; return 1; }
+      ;;
+  esac
+  log "STAGE-CHECK [$STRAT]: DNS"
+  if nslookup openwrt.org 127.0.0.1 >/dev/null 2>&1; then log "STAGE-CHECK [$STRAT]: DNS PASS"; else log "STAGE-CHECK [$STRAT]: DNS WARN"; fi
+  log "STAGE-CHECK [$STRAT]: Internet"
+  if ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1; then log "STAGE-CHECK [$STRAT]: IPv4 PASS"; else log "STAGE-CHECK [$STRAT]: IPv4 WARN"; fi
+  return 0
+}
 adaptive_apply(){
   STRAT="$1"
   case "$STRAT" in
@@ -1532,6 +1706,7 @@ adaptive_apply(){
   esac
   sleep 1
   health >/dev/null 2>&1 || return 1
+  strategy_stage_verify "$STRAT" || return 1
   return 0
 }
 adaptive_scan_candidate(){
@@ -1562,6 +1737,13 @@ adaptive_stability_test(){
 adaptive_controller_run(){
   adaptive_init || return 1
   adaptive_lock || { log 'Adaptive controller already running'; return 0; }
+  # First pass is resource-targeted: repair only currently failing monitored
+  # services. Healthy services are not selected as targets; any global candidate
+  # that regresses a healthy service is rejected and rolled back by ai_apply.
+  if command -v resource_monitor_recovery >/dev/null 2>&1; then
+    log 'Live resource monitor: targeted recovery pass before global optimization'
+    resource_monitor_recovery || true
+  fi
   : > "$ADAPT_HISTORY"; printf 'ts\tstrategy\tphase\tscore\tblocked\thttps_fail\tslow\tok\tavg_latency\tstability\tnote\n' > "$ADAPT_HISTORY"
   build_resource_list
   benchmark_resources baseline >/dev/null
@@ -1595,7 +1777,7 @@ adaptive_controller_run(){
     [ "$CF" -gt 0 ] && NOTE='control-regression'
     [ "$STAB" -lt 50 ] && NOTE='unstable'
     adaptive_log_result "$STRAT" candidate "$F" "$STAB" "$NOTE" >/dev/null
-    if [ "$CF" -eq 0 ] && [ "$STAB" -ge 50 ] && [ "$SCORE" -lt "$BEST_SCORE" ]; then
+    if [ "$CF" -eq 0 ] && [ "$STAB" -ge 50 ] && [ "$SCORE" -lt "$BEST_SCORE" ] && adaptive_guard_regressions "$BASE_FILE" "$F"; then
       adaptive_snapshot "candidate-$STRAT"
       BEST="$STRAT"; BEST_SCORE="$SCORE"
       log "Accepted new best strategy=$BEST score=$BEST_SCORE blocked=$BL https_fail=$HF slow=$SL latency=${LAT}s stability=${STAB}%"
@@ -1686,26 +1868,37 @@ resource_bench_one(){
     adaptive_apply "$STRAT" >/dev/null 2>&1 || { adaptive_restore "$SNAP" >/dev/null 2>&1 || true; continue; }
     R="$(resource_bench_target "$D" "$REPS")"; S="$(printf '%s' "$R"|cut -d'|' -f2)"; STAT="$(printf '%s' "$R"|cut -d'|' -f1)"; LAT="$(printf '%s' "$R"|cut -d'|' -f3)"; STAB="$(printf '%s' "$R"|cut -d'|' -f4)"; CF="$(resource_bench_controls)"
     ACCEPT=0; REASON='not-better'
-    if [ "$CF" -eq 0 ] && [ "$STAB" -ge 50 ] && [ "$S" -lt "$BEST" ]; then ACCEPT=1; REASON='target-improved-no-control-regression'; BEST="$S"; BESTNAME="$STRAT"; BESTSTAT="$STAT"; BESTLAT="$LAT"; BESTSTAB="$STAB"; adaptive_snapshot "resource-best-$SNAP" >/dev/null 2>&1 || true; fi
+    if [ "$CF" -eq 0 ] && [ "$STAT" = OK ] && [ "$STAB" -ge 75 ] && [ "$S" -lt "$BEST" ]; then ACCEPT=1; REASON='target-improved-stable-no-control-regression'; BEST="$S"; BESTNAME="$STRAT"; BESTSTAT="$STAT"; BESTLAT="$LAT"; BESTSTAB="$STAB"; adaptive_snapshot "resource-best-$SNAP" >/dev/null 2>&1 || true; fi
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$D" "$C" "$STRAT" "$STAT" "$S" "$CF" "$LAT" "$STAB" "$ACCEPT" "$REASON" >> "$RESOURCE_BENCH_HISTORY"
     adaptive_restore "$SNAP" >/dev/null 2>&1 || true
   done
-  if [ "$BESTNAME" != baseline ]; then adaptive_restore "resource-best-$SNAP" >/dev/null 2>&1 || adaptive_restore "$SNAP" >/dev/null 2>&1 || true; else adaptive_restore "$SNAP" >/dev/null 2>&1 || true; fi
+  if [ "$BESTNAME" != baseline ]; then
+    adaptive_restore "resource-best-$SNAP" >/dev/null 2>&1 || adaptive_restore "$SNAP" >/dev/null 2>&1 || true
+    FINALR="$(resource_bench_target "$D" "$REPS")"; FINALSTAT="$(printf '%s' "$FINALR"|cut -d'|' -f1)"; FINALSTAB="$(printf '%s' "$FINALR"|cut -d'|' -f4)"; FINALCTRL="$(resource_bench_controls)"
+    if [ "$FINALSTAT" != OK ] || [ "$FINALSTAB" -lt 75 ] || [ "$FINALCTRL" -ne 0 ]; then
+      BESTNAME=baseline; BEST="$BASES"; BESTSTAT="$BASESTAT"; BESTSTAB="$(printf '%s' "$BASET"|cut -d'|' -f4)"; BESTLAT="$BASELAT"
+      adaptive_restore "$SNAP" >/dev/null 2>&1 || true
+    else
+      BEST="$FINALR"; BESTSTAT="$FINALSTAT"; BESTLAT="$(printf '%s' "$FINALR"|cut -d'|' -f3)"; BESTSTAB="$FINALSTAB"; BEST="$(printf '%s' "$FINALR"|cut -d'|' -f2)"
+    fi
+  else
+    adaptive_restore "$SNAP" >/dev/null 2>&1 || true
+  fi
   CONF=40; [ "$BESTNAME" != baseline ] && CONF=80; [ "$BESTSTAB" -ge 80 ] && CONF=$((CONF+10)); [ "$BESTSTAT" = OK ] && CONF=$((CONF+10)); [ "$CONF" -gt 100 ] && CONF=100
   FALLBACK="$(strategy_fallback_for_class "$C")"; resource_bench_update_policy "$D" "$C" "$BESTNAME" "$FALLBACK" "$BEST" "$CONF"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$D" "$C" "$BASESTAT" "$BESTNAME" "$BESTSTAT" "$BEST" "$CONF"
 }
 resource_benchmark_run(){
   resource_bench_init || return 1
-  if [ -e "$RESOURCE_BENCH_LOCK" ]; then
-    _lock_pid="$(cat "$RESOURCE_BENCH_LOCK" 2>/dev/null || true)"
-    case "$_lock_pid" in
-      ''|*[!0-9]*) rm -f "$RESOURCE_BENCH_LOCK" 2>/dev/null || true;;
-      *) kill -0 "$_lock_pid" 2>/dev/null && { log 'Per-resource benchmark already running'; return 0; } || rm -f "$RESOURCE_BENCH_LOCK" 2>/dev/null || true;;
-    esac
+  controller_lock || { log 'Another automatic controller is changing strategy; resource benchmark skipped'; return 0; }
+  if mkdir "${RESOURCE_BENCH_LOCK}.d" 2>/dev/null; then
+    printf '%s\n' "$$" > "${RESOURCE_BENCH_LOCK}.d/pid"
+  else
+    controller_unlock
+    log 'Per-resource benchmark already running'
+    return 0
   fi
-  printf '%s\n' "$$" > "$RESOURCE_BENCH_LOCK"
-  build_resource_list >/dev/null 2>&1 || { rm -f "$RESOURCE_BENCH_LOCK" 2>/dev/null || true; return 1; }
+  build_resource_list >/dev/null 2>&1 || { rm -rf "${RESOURCE_BENCH_LOCK}.d" 2>/dev/null || true; controller_unlock; return 1; }
   LIMIT="$(resource_bench_limit)"; SRC="$BASE/last-problematic.txt"; [ -s "$SRC" ] || SRC="$CANDIDATE_FILE"
   OUT="$RESOURCE_BENCH_DIR/latest.tsv"; printf 'domain\tclass\tbaseline_status\tbest_strategy\tbest_status\tbest_score\tconfidence\n' >"$OUT"
   N=0
@@ -1717,7 +1910,8 @@ resource_benchmark_run(){
   cp -f "$OUT" "$ADAPT_DIR/resource-benchmark-latest.tsv" 2>/dev/null || true
   log "Per-resource benchmark complete: tested=$N mode=$SPEED output=$OUT"
   cat "$OUT"
-  rm -f "$RESOURCE_BENCH_LOCK" 2>/dev/null || true
+  rm -rf "${RESOURCE_BENCH_LOCK}.d" 2>/dev/null || true
+  controller_unlock
 }
 resource_benchmark_status(){ resource_bench_init || return 1; [ -s "$RESOURCE_BENCH_DIR/latest.tsv" ] && cat "$RESOURCE_BENCH_DIR/latest.tsv" || log 'No per-resource benchmark yet'; }
 
@@ -1745,18 +1939,28 @@ service_group_for(){
 }
 service_group_members(){
   G="$1"; resource_matrix_build_candidate "$SPEED" >/dev/null 2>&1 || true
-  while IFS= read -r D; do [ -n "$D" ] || continue; [ "$(service_group_for "$D")" = "$G" ] && echo "$D"; done < "$RESOURCE_DIR/active.lst"
+  while IFS= read -r D; do
+    [ -n "$D" ] || continue
+    DG="$(service_group_for "$D")"
+    case "$G" in
+      ai) [ "$DG" = ai ] || [ "$DG" = openai ] || continue;;
+      social) [ "$DG" = social ] || [ "$DG" = tiktok ] || continue;;
+      messaging) [ "$DG" = discord ] || continue;;
+      *) [ "$DG" = "$G" ] || continue;;
+    esac
+    echo "$D"
+  done < "$RESOURCE_DIR/active.lst"
 }
 service_group_candidates(){
   case "$1" in
-    youtube) printf '%s\n' dpi-youtube-auto dpi awg-split awg-full;;
-    telegram) printf '%s\n' tg-socks5 awg-split awg-full;;
-    discord) printf '%s\n' dpi-discord dpi awg-split awg-full;;
-    tiktok) printf '%s\n' dpi-youtube-auto dpi awg-split awg-full;;
-    social) printf '%s\n' dpi awg-split awg-full;;
-    openai|ai|developer|streaming|news) printf '%s\n' awg-split dpi awg-full;;
-    gaming) printf '%s\n' dpi-game dpi awg-split awg-full;;
-    *) printf '%s\n' core dns dpi awg-split awg-full;;
+    youtube) printf '%s\n' dpi awg-full;;
+    telegram) printf '%s\n' tg-socks5 awg-full;;
+    discord) printf '%s\n' dpi awg-full;;
+    tiktok) printf '%s\n' dpi awg-full;;
+    social) printf '%s\n' dpi awg-full;;
+    openai|ai) printf '%s\n' dpi proxy awg-full;; developer|streaming|news) printf '%s\n' awg-full dpi proxy;;
+    gaming) printf '%s\n' dpi awg-full;;
+    *) printf '%s\n' core dns dpi awg-full;;
   esac
 }
 service_group_weight(){ case "$1" in youtube|telegram|discord|social|tiktok|openai|ai) echo 3;; control) echo 5;; *) echo 1;; esac; }
@@ -1768,19 +1972,204 @@ EOF
  [ "$COUNT" -eq 0 ] && { echo '999999|0|0'; return; }; echo "$TOTAL|$BAD|$COUNT"; }
 service_control_score(){ resource_bench_controls; }
 service_policy_update(){ G="$1"; C="$2"; P="$3"; F="$4"; M="$5"; BS="$6"; BEST="$7"; CONF="$8"; T="$SERVICE_POLICY.tmp.$$"; awk -F '\t' -v g="$G" 'NR==1||$1!=g' "$SERVICE_POLICY" 2>/dev/null >"$T" || printf 'service\tclass\tpreferred\tfallback\tmembers\tbaseline_score\tbest_score\tconfidence\tupdated\n' >"$T"; printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$G" "$C" "$P" "$F" "$M" "$BS" "$BEST" "$CONF" "$(date +%s)" >>"$T"; mv "$T" "$SERVICE_POLICY"; }
+service_module_for_group(){
+  case "$1" in
+    youtube) echo youtube;;
+    social|tiktok) echo social;;
+    gaming) echo gaming;;
+    openai|ai) echo ai;;
+    telegram) echo telegram;;
+    streaming) echo streaming;;
+    discord) echo messaging;;
+    developer) echo developer;;
+    news) echo news;;
+    *) echo "$1";;
+  esac
+}
+SERVICE_MODULE_STATE_DIR='/etc/universal-openwrt/adaptive/service-modules'
+service_module_state_init(){
+  service_modules_init || return 1
+  mkdir -p "$SERVICE_MODULE_STATE_DIR" || return 1
+  for M in $SERVICE_MODULES; do
+    F="$SERVICE_MODULE_STATE_DIR/$M.state"
+    [ -f "$F" ] || cat >"$F" <<EOF
+preferred=baseline
+last_success=baseline
+last_failure=none
+health=100
+successes=0
+failures=0
+consecutive_failures=0
+cooldown_until=0
+last_score=0
+last_bad=0
+last_count=0
+last_latency=0
+last_stability=100
+best_score=999999
+best_stability=0
+last_verified=0
+last_updated=0
+EOF
+    Q="$SERVICE_MODULE_STATE_DIR/$M.queue"
+    [ -f "$Q" ] || : >"$Q"
+    H="$SERVICE_MODULE_STATE_DIR/$M.history.tsv"
+    [ -f "$H" ] || printf 'ts\tstrategy\tstatus\tscore\tbad\tcount\thealth\tstability\tlatency\treason\n' >"$H"
+  done
+}
+service_module_state_get(){
+  service_module_state_init || return 1
+  M="$1"; K="$2"; awk -F= -v k="$K" '$1==k{print substr($0,index($0,"=")+1);exit}' "$SERVICE_MODULE_STATE_DIR/$M.state" 2>/dev/null
+}
+service_module_state_set(){
+  service_module_state_init || return 1
+  M="$1"; K="$2"; V="$3"; F="$SERVICE_MODULE_STATE_DIR/$M.state"; T="$F.tmp.$$"
+  awk -F= -v k="$K" '$1!=k{print}' "$F" >"$T" 2>/dev/null || true
+  printf '%s=%s\n' "$K" "$V" >>"$T" && mv "$T" "$F"
+}
+service_module_health_calc(){
+  BAD="$1"; COUNT="$2"; SCORE="$3"; STABILITY="${4:-100}"
+  [ "$COUNT" -gt 0 ] || { echo 0; return; }
+  BADP=$((BAD*65/COUNT)); LAT=$((SCORE/25)); [ "$LAT" -gt 20 ] && LAT=20
+  STABP=$(( (100-STABILITY)*15/100 )); H=$((100-BADP-LAT-STABP))
+  [ "$H" -lt 0 ] && H=0; [ "$H" -gt 100 ] && H=100; echo "$H"
+}
+service_module_record(){
+  M="$1"; STRAT="$2"; STATUS="$3"; SCORE="$4"; BAD="$5"; COUNT="$6"; REASON="$7"; LAT="${8:-0}"; STABILITY="${9:-100}"
+  H="$(service_module_health_calc "$BAD" "$COUNT" "$SCORE" "$STABILITY")"; NOW="$(date +%s)"
+  service_module_state_set "$M" last_score "$SCORE"; service_module_state_set "$M" last_bad "$BAD"; service_module_state_set "$M" last_count "$COUNT"; service_module_state_set "$M" last_latency "$LAT"; service_module_state_set "$M" last_stability "$STABILITY"; service_module_state_set "$M" health "$H"; service_module_state_set "$M" last_updated "$NOW"; service_module_state_set "$M" last_verified "$NOW"
+  case "$STATUS" in
+    success|baseline)
+      service_module_state_set "$M" last_success "$STRAT"; service_module_state_set "$M" preferred "$STRAT"
+      service_module_state_set "$M" successes "$(( $(service_module_state_get "$M" successes) + 1 ))"; service_module_state_set "$M" consecutive_failures 0; service_module_state_set "$M" cooldown_until 0
+      if [ "$SCORE" -lt "$(service_module_state_get "$M" best_score)" ] 2>/dev/null || [ "$(service_module_state_get "$M" best_score)" = 999999 ]; then service_module_state_set "$M" best_score "$SCORE"; service_module_state_set "$M" best_stability "$STABILITY"; fi
+    ;;
+    failure)
+      service_module_state_set "$M" last_failure "$STRAT"; service_module_state_set "$M" failures "$(( $(service_module_state_get "$M" failures) + 1 ))"
+      CF=$(( $(service_module_state_get "$M" consecutive_failures) + 1 )); service_module_state_set "$M" consecutive_failures "$CF"
+      case "$CF" in 1) CD=900;; 2) CD=3600;; 3) CD=21600;; *) CD=86400;; esac
+      service_module_state_set "$M" cooldown_until "$((NOW+CD))"
+    ;;
+  esac
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$NOW" "$STRAT" "$STATUS" "$SCORE" "$BAD" "$COUNT" "$H" "$STABILITY" "$LAT" "$REASON" >>"$SERVICE_MODULE_STATE_DIR/$M.history.tsv"
+}
+service_group_quality(){
+  G="$1"; ROUNDS="${2:-3}"; i=0; PASS=0; TOTALS=0; BAD_MAX=0; SUM_SCORE=0; LAT_SUM=0; LAT_N=0
+  while [ "$i" -lt "$ROUNDS" ]; do
+    R="$(service_group_score "$G")"; S="$(printf '%s' "$R"|cut -d'|' -f1)"; B="$(printf '%s' "$R"|cut -d'|' -f2)"; C="$(printf '%s' "$R"|cut -d'|' -f3)"
+    SUM_SCORE=$((SUM_SCORE+S)); TOTALS="$C"; [ "$B" -gt "$BAD_MAX" ] && BAD_MAX="$B"
+    [ "$C" -gt 0 ] && [ "$B" -eq 0 ] && PASS=$((PASS+1))
+    [ "$S" -lt 999999 ] && { L=$((S/10)); LAT_SUM=$((LAT_SUM+L)); LAT_N=$((LAT_N+1)); }
+    i=$((i+1)); [ "$i" -lt "$ROUNDS" ] && sleep 1
+  done
+  STAB=$((PASS*100/ROUNDS)); AVG_SCORE=$((SUM_SCORE/ROUNDS)); AVG=0; [ "$LAT_N" -gt 0 ] && AVG=$((LAT_SUM/LAT_N))
+  printf '%s|%s|%s|%s|%s\n' "$AVG_SCORE" "$BAD_MAX" "$TOTALS" "$STAB" "$AVG"
+}
+service_strategy_available(){
+  M="$1"; STRAT="$2"; NOW="$3"; H="$SERVICE_MODULE_STATE_DIR/$M.history.tsv"
+  awk -F '\t' -v s="$STRAT" -v now="$NOW" '
+    BEGIN{last=0; status=""; streak=0}
+    NR>1 && $2==s {
+      if($3=="failure"){streak++; status="failure"; last=$1+0}
+      else {streak=0; status=$3; last=$1+0}
+    }
+    END{
+      if(status!="failure"){print "1"; exit}
+      cd=(streak<=1?900:(streak==2?3600:(streak==3?21600:86400)))
+      print ((now < last+cd)?"0":"1")
+    }' "$H" 2>/dev/null
+}
+service_strategy_rank(){
+  M="$1"; STRAT="$2"; H="$SERVICE_MODULE_STATE_DIR/$M.history.tsv"
+  awk -F '\t' -v s="$STRAT" '
+    NR>1 && $2==s {seen=1; if($3=="success"){ok++; if($4+0<best||best==0)best=$4+0}}
+    END{if(!seen)print "2|0|999999"; else if(ok>0)print "1|" ok "|" (best+0); else print "2|0|999999"}' "$H" 2>/dev/null
+}
+service_module_queue_build(){
+  G="$1"; M="$(service_module_for_group "$G")"; service_module_state_init || return 1
+  Q="$SERVICE_MODULE_STATE_DIR/$M.queue"; T="$Q.tmp.$$"; : >"$T"
+  PREF="$(service_module_state_get "$M" preferred)"; NOW="$(date +%s)"
+  if [ -n "$PREF" ] && [ "$PREF" != baseline ] && [ "$PREF" != none ] && [ "$(service_strategy_available "$M" "$PREF" "$NOW")" = 1 ]; then
+    printf '0\t%s\n' "$PREF" >>"$T"
+  fi
+  service_group_candidates "$G" | while IFS= read -r X; do
+    [ -n "$X" ] || continue; [ "$X" = "$PREF" ] && continue
+    [ "$(service_strategy_available "$M" "$X" "$NOW")" = 1 ] || continue
+    R="$(service_strategy_rank "$M" "$X")"; printf '%s\t%s\t%s\n' "$(printf '%s' "$R"|cut -d'|' -f1)" "$X" "$(printf '%s' "$R"|cut -d'|' -f3)" >>"$T"
+  done
+  if [ -s "$T" ]; then sort -k1,1n -k3,3n "$T" | cut -f2 >"$Q"; else : >"$Q"; fi
+  rm -f "$T"
+}
+service_module_queue(){ G="$1"; M="$(service_module_for_group "$G")"; service_module_queue_build "$G" || return 1; cat "$SERVICE_MODULE_STATE_DIR/$M.queue"; }
+service_module_protected_score(){
+  G="$1"; TOTAL=0; BAD=0; COUNT=0
+  service_module_enabled "$(service_module_for_group "$G")" || { echo '0|0|0'; return; }
+  MEMBERS="$(service_group_members "$G")"
+  while IFS= read -r D; do [ -n "$D" ] || continue; R="$(service_probe_score "$D")"; S="$(printf '%s' "$R"|cut -d'|' -f1)"; V="$(printf '%s' "$R"|cut -d'|' -f2)"; TOTAL=$((TOTAL+V)); [ "$S" = OK ] || BAD=$((BAD+1)); COUNT=$((COUNT+1)); done <<EOF
+$MEMBERS
+EOF
+  echo "$TOTAL|$BAD|$COUNT"
+}
+service_module_recover(){
+  M="$1"; service_module_valid "$M" || { echo "Unknown module: $M" >&2; return 1; }; service_module_enabled "$M" || { echo "Module disabled: $M"; return 0; }
+  case "$M" in
+    telegram) telegram_controller_run;;
+    youtube|social|gaming|ai|streaming|messaging|developer|news) service_benchmark_one "$M";;
+    *) return 1;;
+  esac
+}
 service_benchmark_one(){
-  G="$1"; MEMBERS="$(service_group_members "$G")"; [ -n "$MEMBERS" ] || return 0; C="$G"; SNAP="service-$G"; adaptive_snapshot "$SNAP" >/dev/null 2>&1 || true; BASE="$(service_group_score "$G")"; BS="$(printf '%s' "$BASE"|cut -d'|' -f1)"; BEST="$BS"; BESTNAME=baseline; BESTBAD="$(printf '%s' "$BASE"|cut -d'|' -f2)"; 
-  for STRAT in $(service_group_candidates "$G"); do
-    adaptive_capability "$STRAT" || continue; adaptive_restore "$SNAP" >/dev/null 2>&1 || true; adaptive_apply "$STRAT" >/dev/null 2>&1 || { adaptive_restore "$SNAP" >/dev/null 2>&1 || true; continue; }; R="$(service_group_score "$G")"; S="$(printf '%s' "$R"|cut -d'|' -f1)"; BAD="$(printf '%s' "$R"|cut -d'|' -f2)"; CF="$(service_control_score)"; ACC=0; REASON=not-better; [ "$CF" -eq 0 ] && [ "$BAD" -le "$BESTBAD" ] && [ "$S" -lt "$BEST" ] && { ACC=1; REASON=service-improved; BEST="$S"; BESTNAME="$STRAT"; BESTBAD="$BAD"; adaptive_snapshot "service-best-$SNAP" >/dev/null 2>&1 || true; }; while IFS= read -r D; do [ -n "$D" ] || continue; RR="$(service_probe_score "$D")"; printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$G" "$STRAT" "$D" "$(printf '%s' "$RR"|cut -d'|' -f1)" "$(printf '%s' "$RR"|cut -d'|' -f2)" "$CF" "$ACC" "$REASON" >>"$SERVICE_BENCH_HISTORY"; done <<EOF
+  G="$1"; M="$(service_module_for_group "$G")"; service_module_state_init || return 1; MEMBERS="$(service_group_members "$G")"; [ -n "$MEMBERS" ] || return 0
+  SNAP="service-$G"; adaptive_snapshot "$SNAP" >/dev/null 2>&1 || true; BASE="$(service_group_quality "$G" 3)"; BS="$(printf '%s' "$BASE"|cut -d'|' -f1)"; BEST="$BS"; BESTNAME=baseline; BESTBAD="$(printf '%s' "$BASE"|cut -d'|' -f2)"; BASECOUNT="$(printf '%s' "$BASE"|cut -d'|' -f3)"; BASESTAB="$(printf '%s' "$BASE"|cut -d'|' -f4)"; BASELAT="$(printf '%s' "$BASE"|cut -d'|' -f5)"
+  service_module_record "$M" baseline baseline "$BS" "$BESTBAD" "$BASECOUNT" baseline "$BASELAT" "$BASESTAB"
+  PROTECTED_BASE=""
+  for PG in youtube social gaming ai streaming messaging developer news; do [ "$PG" = "$G" ] && continue; service_module_enabled "$PG" || continue; PR="$(service_module_protected_score "$PG")"; PB="$(printf '%s' "$PR"|cut -d'|' -f2)"; PROTECTED_BASE="$PROTECTED_BASE $PG=$PB"; done
+  for STRAT in $(service_module_queue "$G"); do
+    adaptive_capability "$STRAT" || continue; adaptive_restore "$SNAP" >/dev/null 2>&1 || true
+    adaptive_apply "$STRAT" >/dev/null 2>&1 || { service_module_record "$M" "$STRAT" failure "$BS" "$BESTBAD" "$(printf '%s' "$BASE"|cut -d'|' -f3)" apply-failed; adaptive_restore "$SNAP" >/dev/null 2>&1 || true; continue; }
+    R="$(service_group_score "$G")"; S="$(printf '%s' "$R"|cut -d'|' -f1)"; BAD="$(printf '%s' "$R"|cut -d'|' -f2)"; COUNT="$(printf '%s' "$R"|cut -d'|' -f3)"; Q="$(service_group_quality "$G" 3)"; QS="$(printf '%s' "$Q"|cut -d'|' -f1)"; QB="$(printf '%s' "$Q"|cut -d'|' -f2)"; QC="$(printf '%s' "$Q"|cut -d'|' -f3)"; QSTAB="$(printf '%s' "$Q"|cut -d'|' -f4)"; QLAT="$(printf '%s' "$Q"|cut -d'|' -f5)"; [ "$QS" -lt "$S" ] && S="$QS"; [ "$QB" -gt "$BAD" ] && BAD="$QB"; CF="$(service_control_score)"; ACC=0; REASON=not-better; PROTECTED_FAIL=0
+    for ITEM in $PROTECTED_BASE; do PG="${ITEM%%=*}"; PB="${ITEM#*=}"; PR="$(service_module_protected_score "$PG")"; PA="$(printf '%s' "$PR"|cut -d'|' -f2)"; [ "$PA" -gt "$PB" ] && { PROTECTED_FAIL=1; break; }; done
+    [ "$CF" -eq 0 ] && [ "$PROTECTED_FAIL" -eq 0 ] && [ "$QSTAB" -ge 75 ] && [ "$QB" -eq 0 ] && [ "$BAD" -le "$BESTBAD" ] && [ "$S" -lt "$BEST" ] && { ACC=1; REASON=service-improved-stable; BEST="$S"; BESTNAME="$STRAT"; BESTBAD="$BAD"; adaptive_snapshot "service-best-$SNAP" >/dev/null 2>&1 || true; service_module_record "$M" "$STRAT" success "$S" "$BAD" "$COUNT" "$REASON" "$QLAT" "$QSTAB"; }
+    [ "$ACC" -eq 0 ] && { [ "$PROTECTED_FAIL" -ne 0 ] && REASON=protected-module-regression; service_module_record "$M" "$STRAT" failure "$S" "$BAD" "$COUNT" "$REASON" "$QLAT" "$QSTAB"; }
+    while IFS= read -r D; do [ -n "$D" ] || continue; RR="$(service_probe_score "$D")"; printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$G" "$STRAT" "$D" "$(printf '%s' "$RR"|cut -d'|' -f1)" "$(printf '%s' "$RR"|cut -d'|' -f2)" "$CF" "$ACC" "$REASON" >>"$SERVICE_BENCH_HISTORY"; done <<EOF
 $MEMBERS
 EOF
     adaptive_restore "$SNAP" >/dev/null 2>&1 || true
   done
-  if [ "$BESTNAME" != baseline ]; then adaptive_restore "service-best-$SNAP" >/dev/null 2>&1 || adaptive_restore "$SNAP" >/dev/null 2>&1 || true; else adaptive_restore "$SNAP" >/dev/null 2>&1 || true; fi
-  CONF=50; [ "$BESTNAME" != baseline ] && CONF=80; [ "$BESTBAD" -eq 0 ] && CONF=$((CONF+10)); [ "$CONF" -gt 100 ] && CONF=100; FALLBACK="$(strategy_fallback_for_class "$G")"; [ "$G" = youtube ] && FALLBACK=awg-split; [ "$G" = telegram ] && FALLBACK=core; service_policy_update "$G" "$C" "$BESTNAME" "$FALLBACK" "$(printf '%s\n' "$MEMBERS"|tr '\n' ', '|sed 's/, $//')" "$BS" "$BEST" "$CONF"; printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$G" "$BS" "$BESTNAME" "$BESTBAD" "$BEST" "$CONF"; }
-service_benchmark_run(){ service_policy_init || return 1; build_resource_list >/dev/null 2>&1 || true; case "$SPEED" in quick) GS='youtube telegram social';; standard) GS='youtube telegram social discord openai developer streaming';; deep) GS='youtube telegram social discord tiktok openai ai developer streaming gaming news';; *) GS='youtube telegram social discord';; esac; OUT="$SERVICE_BENCH_DIR/latest.tsv"; printf 'service\tbaseline_score\tbest_strategy\tbad_members\tbest_score\tconfidence\n' >"$OUT"; for G in $GS; do service_benchmark_one "$G" >>"$OUT" 2>/dev/null || true; done; cp -f "$OUT" "$ADAPT_DIR/service-benchmark-latest.tsv" 2>/dev/null || true; log "Service-group benchmark complete: $OUT"; cat "$OUT"; }
+  if [ "$BESTNAME" != baseline ]; then
+    adaptive_restore "service-best-$SNAP" >/dev/null 2>&1 || adaptive_restore "$SNAP" >/dev/null 2>&1 || true
+    FINALQ="$(service_group_quality "$G" 3)"; FQS="$(printf '%s' "$FINALQ"|cut -d'|' -f1)"; FQB="$(printf '%s' "$FINALQ"|cut -d'|' -f2)"; FSTAB="$(printf '%s' "$FINALQ"|cut -d'|' -f4)"
+    if [ "$FQB" -ne 0 ] || [ "$FSTAB" -lt 75 ] || [ "$FQS" -ge "$BS" ]; then
+      service_module_record "$M" "$BESTNAME" failure "$FQS" "$FQB" "$(printf '%s' "$FINALQ"|cut -d'|' -f3)" final-verification-failed "$(printf '%s' "$FINALQ"|cut -d'|' -f5)" "$FSTAB"
+      adaptive_restore "$SNAP" >/dev/null 2>&1 || true
+      BESTNAME=baseline; BEST="$BS"; BESTBAD="$BESTBAD"
+    else
+      BEST="$FQS"; BESTBAD="$FQB"
+    fi
+  else
+    adaptive_restore "$SNAP" >/dev/null 2>&1 || true
+  fi
+  CONF=50; [ "$BESTNAME" != baseline ] && CONF=80; [ "$BESTBAD" -eq 0 ] && CONF=$((CONF+10)); [ "$(service_module_state_get "$M" successes)" -ge 3 ] && CONF=$((CONF+5)); [ "$CONF" -gt 100 ] && CONF=100
+  FALLBACK="$(strategy_fallback_for_class "$G")"; [ "$G" = youtube ] && FALLBACK=awg-full; [ "$G" = telegram ] && FALLBACK=core
+  service_policy_update "$G" "$G" "$BESTNAME" "$FALLBACK" "$(printf '%s\n' "$MEMBERS"|tr '\n' ', '|sed 's/, $//')" "$BS" "$BEST" "$CONF"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$G" "$BS" "$BESTNAME" "$BESTBAD" "$BEST" "$CONF" "$(service_module_state_get "$M" health)"
+}
+service_benchmark_run(){ service_policy_init || return 1; controller_lock || { log 'Another automatic controller is changing strategy; service benchmark skipped'; return 0; }; build_resource_list >/dev/null 2>&1 || true; case "$SPEED" in quick) GS='youtube telegram social';; standard) GS='youtube telegram social messaging ai developer streaming';; deep) GS='youtube telegram social messaging ai developer streaming gaming news';; *) GS='youtube telegram social messaging';; esac; OUT="$SERVICE_BENCH_DIR/latest.tsv"; printf 'service\tbaseline_score\tbest_strategy\tbad_members\tbest_score\tconfidence\n' >"$OUT"; for G in $GS; do GM="$(service_module_for_group "$G")"; service_module_enabled "$GM" || { printf '%s\tDISABLED\tSKIPPED\t0\t0\t0\n' "$G" >>"$OUT"; continue; }; [ "$G" = telegram ] && { printf '%s\tDEDICATED\ttelegram-controller\t0\t0\t100\n' "$G" >>"$OUT"; continue; }; service_benchmark_one "$G" >>"$OUT" 2>/dev/null || true; done; cp -f "$OUT" "$ADAPT_DIR/service-benchmark-latest.tsv" 2>/dev/null || true; log "Service-group benchmark complete: $OUT"; cat "$OUT"; controller_unlock; }
 service_benchmark_status(){ service_policy_init || return 1; [ -s "$SERVICE_BENCH_DIR/latest.tsv" ] && cat "$SERVICE_BENCH_DIR/latest.tsv" || log 'No service-group benchmark yet'; }
 service_policy_status(){ service_policy_init || return 1; cat "$SERVICE_POLICY"; }
+service_modules_health_status(){
+  service_module_state_init || return 1
+  printf 'module\tenabled\tpreferred\thealth\tsuccesses\tfailures\tlast_score\tlast_bad\tstability\tcooldown_until\tupdated\n'
+  for M in $SERVICE_MODULES; do
+    EN=0; service_module_enabled "$M" && EN=1
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$M" "$EN" "$(service_module_state_get "$M" preferred)" "$(service_module_state_get "$M" health)" "$(service_module_state_get "$M" successes)" "$(service_module_state_get "$M" failures)" "$(service_module_state_get "$M" last_score)" "$(service_module_state_get "$M" last_bad)" "$(service_module_state_get "$M" last_stability)" "$(service_module_state_get "$M" cooldown_until)" "$(service_module_state_get "$M" last_updated)"
+  done
+}
+service_module_queue_status(){
+  service_module_state_init || return 1
+  for M in $SERVICE_MODULES; do echo "[$M]"; cat "$SERVICE_MODULE_STATE_DIR/$M.queue" 2>/dev/null || true; done
+}
+
 
 # ---------- predictive adaptive controller ----------
 PRED_DIR='/etc/universal-openwrt/predictive'
@@ -1791,17 +2180,18 @@ predictive_init(){ mkdir -p "$PRED_DIR" "$PRED_DIR/cache" 2>/dev/null || return 
 predictive_state_get(){ predictive_init || return 1; awk -F= -v k="$1" '$1==k{print substr($0,index($0,"=")+1);exit}' "$PRED_STATE" 2>/dev/null; }
 predictive_state_set(){ predictive_init || return 1; K="$1"; V="$2"; T="$PRED_STATE.tmp.$$"; awk -F= -v k="$K" '$1!=k{print}' "$PRED_STATE" 2>/dev/null >"$T" || true; printf '%s=%s\n' "$K" "$V" >>"$T"; mv "$T" "$PRED_STATE"; }
 predictive_lock(){
-  if [ -e "$PRED_LOCK" ]; then
-    _lock_pid="$(cat "$PRED_LOCK" 2>/dev/null || true)"
-    case "$_lock_pid" in
-      ''|*[!0-9]*) rm -f "$PRED_LOCK" 2>/dev/null || true;;
-      *) kill -0 "$_lock_pid" 2>/dev/null && return 1 || rm -f "$PRED_LOCK" 2>/dev/null || true;;
-    esac
-  fi
-  printf '%s\n' "$$" > "$PRED_LOCK"
+  _lock_dir="${PRED_LOCK}.d"
+  if mkdir "$_lock_dir" 2>/dev/null; then printf '%s\n' "$$" >"$_lock_dir/pid"; return 0; fi
+  _lock_pid="$(cat "$_lock_dir/pid" 2>/dev/null || true)"
+  case "$_lock_pid" in
+    ''|*[!0-9]*) rm -rf "$_lock_dir" 2>/dev/null || true;;
+    *) kill -0 "$_lock_pid" 2>/dev/null && return 1 || rm -rf "$_lock_dir" 2>/dev/null || true;;
+  esac
+  mkdir "$_lock_dir" 2>/dev/null || return 1
+  printf '%s\n' "$$" >"$_lock_dir/pid"
   return 0
 }
-predictive_unlock(){ rm -f "$PRED_LOCK" 2>/dev/null || true; }
+predictive_unlock(){ rm -rf "${PRED_LOCK}.d" 2>/dev/null || true; }
 predictive_limit(){ case "$SPEED" in quick) echo 8;; standard) echo 20;; deep) echo 40;; *) echo 20;; esac; }
 predictive_record_file(){ FILE="$1"; STRAT="${2:-current}"; MODE="${3:-$SPEED}"; TS="$(date +%s)"; [ -s "$FILE" ] || return 0; awk -F '\t' -v ts="$TS" -v strat="$STRAT" -v mode="$MODE" 'NR>1&&NF>=7{print ts"\t"$1"\t"$2"\t"$7"\t"$3"\t"strat"\t"mode}' "$FILE" >> "$PRED_HISTORY"; }
 predictive_domain_score(){ D="$1"; awk -F '\t' -v d="$D" 'NR>1&&$2==d{n++;if($3=="OK")ok++;if($3=="SLOW_CANDIDATE")slow++;if($3=="HTTPS_FAIL")hf++;if($3=="BLOCKED_CANDIDATE")bl++;if($4+0>0){sum+=$4;nlat++}}END{if(n==0){print "0|0|0|0|0|0";exit}print n"|"ok"|"slow"|"hf"|"bl"|"(nlat?sum/nlat:99)}' "$PRED_HISTORY"; }
@@ -1927,7 +2317,7 @@ verify_regression(){
 rpc_smoke(){
   have ubus || { log 'RPC_SMOKE=SKIP (ubus missing)'; return 0; }
   have jsonfilter || { log 'RPC_SMOKE=SKIP (jsonfilter missing)'; return 0; }
-  METHODS="version status verify self_check awg_status vpn_profiles vpn_monitor_status adaptive_status predictive_status device_status service_policy tg_proxy_status tg_ws_status tg_socks5_status tg_failover_status strategy_plan strategy_status tunnel_status tunnel_profiles"
+  METHODS="version status verify self_check awg_status vpn_profiles vpn_monitor_status adaptive_status predictive_status device_status service_policy tg_proxy_status tg_ws_status tg_socks5_status tg_failover_status telegram_controller_status telegram_controller_probe strategy_plan strategy_status tunnel_status tunnel_profiles"
   FAIL=0
   for M in $METHODS; do
     OUT="$(ubus call universal_openwrt "$M" '{}' 2>&1)" || { log "RPC $M: FAIL (ubus)"; FAIL=1; continue; }
@@ -2069,20 +2459,20 @@ device_discover(){
 
 device_candidates(){
   case "$1" in
-    ios) echo 'dpi-youtube-auto dpi awg-split tg-socks5 awg-full';;
-    android) echo 'dpi-youtube-auto dpi awg-split tg-socks5 awg-full';;
-    windows) echo 'dpi-youtube-auto dpi-discord dpi awg-split awg-full proxy';;
-    tv) echo 'dpi-youtube-auto awg-split awg-full dpi';;
-    gaming) echo 'dpi-discord dpi awg-split awg-full';;
-    *) echo 'dpi-youtube-auto dpi awg-split awg-full podkop proxy';;
+    ios) echo 'dpi tg-socks5 awg-full';;
+    android) echo 'dpi tg-socks5 awg-full';;
+    windows) echo 'dpi awg-full proxy';;
+    tv) echo 'dpi awg-full';;
+    gaming) echo 'dpi awg-full';;
+    *) echo 'dpi awg-full podkop proxy';;
   esac
 }
 
 device_service_for_profile(){
   case "$1" in
     telegram) echo tg-socks5;;
-    youtube) echo dpi-youtube-auto;;
-    discord) echo dpi-discord;;
+    youtube) echo dpi;;
+    discord) echo dpi;;
     *) echo dpi;;
   esac
 }
@@ -2098,10 +2488,10 @@ device_benchmark_one(){
     case "$SERVICE" in
       youtube) grep -q '^youtube' "$ADAPT_DIR/service-benchmark-latest.tsv" 2>/dev/null && SCORE=50 || SCORE=500;;
       telegram) [ "$S" = tg-socks5 ] && SCORE=10 || SCORE=300;;
-      discord) [ "$S" = dpi-discord ] && SCORE=20 || SCORE=200;;
+      discord) [ "$S" = dpi ] && SCORE=20 || SCORE=200;;
       *) SCORE=100;;
     esac
-    case "$PROF" in tv) [ "$SERVICE" = youtube ] && [ "$S" = dpi-youtube-auto ] && SCORE=$((SCORE-10));; ios|android) [ "$SERVICE" = youtube ] && [ "$S" = awg-split ] && SCORE=$((SCORE-5));; esac
+    case "$PROF" in tv) [ "$SERVICE" = youtube ] && [ "$S" = dpi ] && SCORE=$((SCORE-10));; ios|android) [ "$SERVICE" = youtube ] && [ "$S" = awg-full ] && SCORE=$((SCORE-5));; esac
     [ "$SCORE" -lt "$BEST" ] && { BEST="$SCORE"; BESTNAME="$S"; BESTRES="$RES"; }
   done
   CONF=40; [ "$PROF" != generic ] && CONF=65; [ "$SERVICE" = telegram ] && [ "$BESTNAME" = tg-socks5 ] && CONF=90
@@ -2118,7 +2508,7 @@ device_benchmark(){
   while IFS="$(printf '\t')" read -r IP MAC HOST PROF SRC CONF UPDATED; do
     [ "$IP" = ip ] && continue
     [ -n "$IP" ] || continue
-    for SERVICE in youtube telegram discord; do
+    for SERVICE in youtube discord; do
       device_benchmark_one "$IP" "$MAC" "$PROF" "$SERVICE" >/dev/null 2>&1 || true
     done
   done <"$DEVICE_CLIENTS"
@@ -2157,6 +2547,7 @@ Universal OpenWrt v$VERSION
   --profile NAME auto|minimal|dns|full
   --module NAME auto|core|doh-unpoison|malw-hosts|dpi-desync|awg-warp|podkop|proxy|all
   --vpn-mode MODE split|full|off (AWG routing mode; default split)
+  --github-status show GitHub/source availability
   --awg-status    show AWG/WARP registration/tunnel status
   --awg-auto      install ABI-matched AWG packages + register WARP + generate config
   --vpn-profiles  list saved AWG/WARP profiles
@@ -2170,6 +2561,7 @@ Universal OpenWrt v$VERSION
   --vpn-monitor-enable  enable automatic VPN failover/recovery monitor
   --vpn-monitor-disable disable automatic VPN failover/recovery monitor
   --vpn-monitor-run     run one low-load monitor cycle
+  --vpn-health [IFACE]  verify interface/handshake/RX-TX/route/DNS/IPv4/IPv6
   --adaptive-auto       benchmark DPI/DNS/AWG/Podkop/Proxy strategies and activate the best
   --adaptive-status     show adaptive strategy controller state/history
   --resource-policy     show resource-specific strategy matrix
@@ -2178,6 +2570,10 @@ Universal OpenWrt v$VERSION
   --resource-benchmark  benchmark strategies separately for each problematic resource
   --resource-benchmark-status show latest per-resource benchmark results
   --service-benchmark      benchmark service groups
+  --service-modules-status  show independent service modules
+  --service-module-enable NAME  enable one service module
+  --service-module-disable NAME disable one service module
+  --service-module-recover NAME recover only one enabled module
   --service-benchmark-status show latest service-group benchmark results
   --service-policy-status   show service policy
   --zapret-sources-update refresh StressOzz Zapret/YouTube strategy sources
@@ -2194,15 +2590,41 @@ Universal OpenWrt v$VERSION
   --tg-ws-disable       stop Telegram MTProto WebSocket backend
   --tg-failover-status   show unified Telegram failover state
   --tg-failover-run      apply Telegram failover policy (auto by default)
+  --telegram-controller-status  show dedicated Telegram controller state
+  --telegram-controller-probe    probe current Telegram path
+  --telegram-controller-run      verify/recover Telegram without touching generic strategies
+  --telegram-controller-enable   enable dedicated Telegram monitoring
+  --telegram-controller-disable  disable dedicated Telegram monitoring
+  --telegram-controller-config E M P I L  configure controller (enabled/mode/port/interval/fail-limit)
   --predictive-auto     diagnose resource failure type and run predictive adaptive recovery
   --device-discover     discover LAN clients and infer device profiles
   --device-benchmark    build device-aware per-client service policy
   --device-status       show device inventory and policies
+  --ai-catalog         list AI service catalog
+  --ai-diagnose SERVICE diagnose one AI service (or use all)
+  --ai-test SERVICE    diagnose one AI service
+  --ai-auto SERVICE    classify and show ordered AI access strategy candidates
+  --ai-apply SERVICE   test/apply candidates in priority order with service-level rollback
+  --ai-preset-status   show reserve community preset registry
+  --ai-preset-fetch ID explicitly fetch and validate a reserve preset
+  --resource-monitor      scan monitored resources and show live health state
+  --resource-recovery     recover only failed resources, protecting healthy ones
   --device-profile IP PROFILE  force a client profile (ios/android/windows/tv/gaming/generic)
   --version          show installed version
   --self-check       run lightweight local dependency/integrity checks
   --self-update URL SHA256  replace this script after SHA256 verification
   --predictive-status   show predictive controller state/history
+  --automation-status   show daily strategy automation status
+  --automation-enable   enable strategy automation using saved schedule
+  --automation-disable  disable strategy automation
+  --automation-config ENABLED HOUR MINUTE INTERVAL_HOURS
+                       configure automation schedule (interval: 1,2,3,4,6,8,12,24h)
+  --automation-run      run the strategy selection now
+  --strategy-group-status show all service strategy groups
+  --strategy-group-apply GROUP STRATEGY apply a checked strategy to one group
+  --strategy-group-disable GROUP exclude one group from automatic selection
+  --strategy-group-enable GROUP enable one group with its default strategy
+  --telegram-details     show Telegram controller/backends and generated proxy links
   --speed MODE quick|standard|deep|auto
   -y             non-interactive
 USAGE
@@ -2247,6 +2669,7 @@ VPN_PROFILE_MODE="";;
     --vpn-monitor-enable) MODE=vpn_monitor_enable;;
     --vpn-monitor-disable) MODE=vpn_monitor_disable;;
     --vpn-monitor-run) MODE=vpn_monitor_run;;
+    --vpn-health) MODE=vpn_health; shift; VPN_HEALTH_IFACE="${1:-}";;
     --adaptive-auto) MODE=adaptive_auto;;
     --adaptive-status) MODE=adaptive_status;;
     --resource-policy) MODE=resource_policy;;
@@ -2257,6 +2680,8 @@ VPN_PROFILE_MODE="";;
     --service-benchmark) MODE=service_benchmark;;
     --service-benchmark-status) MODE=service_benchmark_status;;
     --service-policy-status) MODE=service_policy_status;;
+    --service-modules-health) MODE=service_modules_health;;
+    --service-modules-queues) MODE=service_modules_queues;;
     --zapret-sources-update) MODE=zapret_sources_update;;
     --zapret-strategy-status) MODE=zapret_strategy_status;;
     --tg-proxy-status) MODE=tg_proxy_status;;
@@ -2271,17 +2696,56 @@ VPN_PROFILE_MODE="";;
     --tg-ws-disable) MODE=tg_ws_disable;;
     --tg-failover-status) MODE=tg_failover_status;;
     --tg-failover-run) MODE=tg_failover_run;;
+    --telegram-controller-status) MODE=telegram_controller_status;;
+    --telegram-backends-status) MODE=telegram_backends_status;;
+    --telegram-telemt-install) MODE=telegram_telemt_install;;
+    --telegram-telemt-enable) MODE=telegram_telemt_enable;;
+    --telegram-telemt-disable) MODE=telegram_telemt_disable;;
+    --telegram-controller-probe) MODE=telegram_controller_probe;;
+    --telegram-controller-run) MODE=telegram_controller_run;;
+    --telegram-controller-enable) MODE=telegram_controller_enable;;
+    --telegram-controller-disable) MODE=telegram_controller_disable;;
+    --telegram-controller-config) MODE=telegram_controller_config; TGCTL_ARG1="${2:-}"; TGCTL_ARG2="${3:-}"; TGCTL_ARG3="${4:-}"; TGCTL_ARG4="${5:-}"; TGCTL_ARG5="${6:-}";;
     --predictive-auto) MODE=predictive_auto;;
     --device-discover) MODE=device_discover;;
     --device-benchmark) MODE=device_benchmark;;
     --device-status) MODE=device_status;;
+    --ai-catalog) MODE=ai_catalog;;
+    --ai-diagnose) MODE=ai_diagnose; shift; AI_SERVICE="${1:-all}";;
+    --ai-test) MODE=ai_test; shift; AI_SERVICE="${1:-}";;
+    --ai-auto) MODE=ai_auto; shift; AI_SERVICE="${1:-openai}";;
+    --ai-apply) MODE=ai_apply; shift; AI_SERVICE="${1:-openai}";;
+    --ai-preset-status) MODE=ai_preset_status;;
+    --ai-preset-fetch) MODE=ai_preset_fetch; shift; AI_PRESET_ID="${1:-}";;
+    --service-modules-status) MODE=service_modules_status;;
+    --service-module-enable) MODE=service_module_enable; SERVICE_MODULE_NAME="${2:-}"; shift;;
+    --service-module-disable) MODE=service_module_disable; SERVICE_MODULE_NAME="${2:-}"; shift;;
+    --service-module-recover) MODE=service_module_recover; SERVICE_MODULE_NAME="${2:-}"; shift;;
+    --resource-monitor) MODE=resource_monitor;;
+    --resource-recovery) MODE=resource_recovery;;
     --device-profile) MODE=device_profile; DEVICE_IP="${2:-}"; DEVICE_PROF="${3:-}"; shift 2;;
+    --github-status) MODE=github_status;;
     --version) printf '%s\n' "Universal OpenWrt v$VERSION"; exit 0;;
     --self-check) MODE=self_check;;
     --self-update) SELF_UPDATE_URL="${2:-}"; SELF_UPDATE_SHA256="${3:-}"; [ -n "$SELF_UPDATE_URL" ] || die 'URL required for --self-update'; [ -n "$SELF_UPDATE_SHA256" ] || die 'SHA256 required for --self-update'; shift 2;;
     --predictive-status) MODE=predictive_status;;
+    --automation-status) MODE=automation_status;;
+    --automation-enable) MODE=automation_enable;;
+    --automation-disable) MODE=automation_disable;;
+    --automation-config) MODE=automation_config; AUTOMATION_ENABLED="${2:-}"; AUTOMATION_HOUR="${3:-}"; AUTOMATION_MINUTE="${4:-}"; AUTOMATION_INTERVAL="${5:-}"; shift 4;;
+    --automation-run) MODE=automation_run;;
     --strategy-plan) MODE=strategy_plan;;
     --strategy-status) MODE=strategy_status;;
+    --strategy-group-status) MODE=strategy_group_status;;
+    --strategy-group-apply) MODE=strategy_group_apply; STRATEGY_GROUP="${2:-}"; STRATEGY_GROUP_STRAT="${3:-}"; shift 2;;
+    --strategy-group-disable) MODE=strategy_group_disable; STRATEGY_GROUP="${2:-}"; shift;;
+    --strategy-group-enable) MODE=strategy_group_enable; STRATEGY_GROUP="${2:-}"; shift;;
+    --telegram-details) MODE=telegram_details;;
+    --remote-wg-status) MODE=remote_wg_status;;
+    --remote-wg-check) MODE=remote_wg_check;;
+    --remote-wg-diagnose) MODE=remote_wg_diagnose;;
+    --remote-wg-setup) MODE=remote_wg_setup;;
+    --remote-wg-list) MODE=remote_wg_list;;
     --tunnel-status) MODE=tunnel_status;;
     --tunnel-profiles) MODE=tunnel_profiles;;
     --tunnel-profile-create) MODE=tunnel_profile_create; TUNNEL_NAME="${2:-}"; TUNNEL_ADDRESS="${3:-}"; TUNNEL_PORT="${4:-443}"; TUNNEL_UUID="${5:-}"; TUNNEL_SERVERNAME="${6:-}"; shift 5;;
@@ -2298,6 +2762,7 @@ done
 
 validate_speed
 validate_vpn_mode
+case "$MODE" in version|help|:) :;; *) github_preflight || true;; esac
 if [ -n "${SELF_UPDATE_URL:-}" ]; then
   TMP_UPDATE="/tmp/universal-openwrt-update.$$"
   if have uclient-fetch; then uclient-fetch -q -O "$TMP_UPDATE" "$SELF_UPDATE_URL"; elif have wget; then wget -q -O "$TMP_UPDATE" "$SELF_UPDATE_URL"; elif have curl; then curl -fsSL -o "$TMP_UPDATE" "$SELF_UPDATE_URL"; else die "No downloader available"; fi
@@ -2311,7 +2776,30 @@ if [ -n "${SELF_UPDATE_URL:-}" ]; then
   rm -f "$TMP_UPDATE"
   exec "$0" --version
 fi
+remote_wg_status(){ sh "$UOWRT_LIB/wireguard-remote.sh" status; }
+remote_wg_check(){ sh "$UOWRT_LIB/wireguard-remote.sh" check; }
+remote_wg_diagnose(){ sh "$UOWRT_LIB/wireguard-remote.sh" diagnose; }
+remote_wg_setup(){ [ "$ASSUME_YES" = 1 ] || die 'remote-wg-setup requires -y'; sh "$UOWRT_LIB/wireguard-remote.sh" setup; }
+remote_wg_list(){ sh "$UOWRT_LIB/wireguard-remote.sh" list; }
+
 case "$MODE" in
+  remote_wg_status) remote_wg_status; exit $?;;
+  remote_wg_check) remote_wg_check; exit $?;;
+  remote_wg_diagnose) remote_wg_diagnose; exit $?;;
+  remote_wg_setup) remote_wg_setup; exit $?;;
+  remote_wg_list) remote_wg_list; exit $?;;
+  telegram_details)
+    echo 'controller'; telegram_controller_status; echo '--- socks5-go ---'; tggo_status; echo '--- ws ---'; tgws_status; echo '--- telemt ---'; telemt_status; echo '--- external ---'; tg_proxy_status; exit 0;;
+  telegram_backends_status)
+    printf 'backend\tid\tstate\tsupported\tactive\n'
+    printf 'backend\tgo\t%s\tyes\t%s\n' "$(tggo_installed && echo ready || echo unavailable)" "$(tggo_running && echo yes || echo no)"
+    printf 'backend\tlegacy\t%s\tyes\t%s\n' "$(tgws_configured && echo ready || echo unavailable)" "$(tgws_running && echo yes || echo no)"
+    printf 'backend\texternal\t%s\tyes\t%s\n' "$(tg_proxy_configured && echo ready || echo unavailable)" "$(tg_failover_runtime_socks && echo yes || echo no)"
+    printf 'backend\ttelemt\t%s\t%s\t%s\n' "$(telemt_configured && echo ready || echo unavailable)" "$(telemt_arch_asset >/dev/null 2>&1 && echo yes || echo no)" "$(telemt_process_running && echo yes || echo no)"
+    ;;
+  telegram_telemt_install) telemt_install; exit $?;;
+  telegram_telemt_enable) telemt_enable; exit $?;;
+  telegram_telemt_disable) telemt_disable; exit 0;;
   tg_ws_status) tgws_status; exit $?;;
   tg_proxy_status) tg_proxy_load; printf 'Telegram SOCKS5: enabled=%s host=%s port=%s configured=%s\n' "$TG_ENABLED" "${TG_HOST:-unset}" "${TG_PORT:-unset}" "$(tg_proxy_configured && echo yes || echo no)"; exit 0;;
   tg_failover_status) tg_failover_status; exit $?;;
@@ -2321,6 +2809,10 @@ case "$MODE" in
   tg_socks5_disable) tggo_disable; exit 0;;
   strategy_plan) se_plan; exit $?;;
   strategy_status) se_status; exit $?;;
+  strategy_group_status) se_group_status; exit $?;;
+  strategy_group_apply) se_apply_group "$STRATEGY_GROUP" "$STRATEGY_GROUP_STRAT"; exit $?;;
+  strategy_group_disable) se_group_disable "$STRATEGY_GROUP"; exit $?;;
+  strategy_group_enable) se_apply_group "$STRATEGY_GROUP" "$(se_group_strategy "$STRATEGY_GROUP")"; exit $?;;
   tunnel_status) te_status; exit $?;;
   tunnel_profiles) te_profile_list; exit $?;;
   tunnel_profile_create) te_profile_create "$TUNNEL_NAME" "$TUNNEL_ADDRESS" "$TUNNEL_PORT" "$TUNNEL_UUID" "$TUNNEL_SERVERNAME"; exit $?;;
@@ -2334,7 +2826,7 @@ case "$MODE" in
   self_check)
     detect
     require_supported_platform
-    printf 'version=%s\npackage_manager=%s\nfirewall=%s\narch=%s\nkernel=%s\nram_kb=%s\nfree_root_kb=%s\n' "$VERSION" "$PM" "$FW" "$ARCH" "$KERNEL" "$RAM_KB" "$FREE_KB"
+    printf 'version=%s\npackage_manager=%s\nfirewall=%s\narch=%s\nkernel=%s\nkernel_abi=%s\nram_kb=%s\nfree_root_kb=%s\n' "$VERSION" "$PM" "$FW" "$ARCH" "$KERNEL" "$KERNEL_ABI" "$RAM_KB" "$FREE_KB"
     for x in uci ubus jsonfilter ip awk sed grep; do have "$x" && printf 'tool.%s=ok\n' "$x" || printf 'tool.%s=missing\n' "$x"; done
     exit 0;;
   install_luci) install_luci; exit 0;;
@@ -2347,6 +2839,7 @@ awg_auto(){ VPN_MODE=split; AWG_IFACE=awg10; awg_auto_setup; }
 case "$MODE" in
   diagnose) exit 0;;
   matrix) matrix; exit 0;;
+  github_status) github_preflight; exit $?;;
   awg_status) awg_registration_status; exit 0;;
   awg_auto) awg_auto; exit $?;;
   vpn_profiles) vpn_profile_list; exit 0;;
@@ -2360,6 +2853,7 @@ case "$MODE" in
   vpn_monitor_enable) vpn_monitor_enable; exit 0;;
   vpn_monitor_disable) vpn_monitor_disable; exit 0;;
   vpn_monitor_run) vpn_monitor_run; exit $?;;
+  vpn_health) vpn_health "${VPN_HEALTH_IFACE:-${AWG_IFACE:-awg10}}"; exit $?;;
   adaptive_auto) adaptive_controller_run; exit $?;;
   adaptive_status) adaptive_status; exit 0;;
   resource_policy) resource_policy_plan; resource_policy_status; exit 0;;
@@ -2370,6 +2864,8 @@ case "$MODE" in
   service_benchmark) service_benchmark_run; exit $?;;
   service_benchmark_status) service_benchmark_status; exit 0;;
   service_policy_status) service_policy_status; exit 0;;
+  service_modules_health) service_modules_health_status; exit 0;;
+  service_modules_queues) service_module_queue_status; exit 0;;
   zapret_sources_update) zapret_source_update; exit $?;;
   zapret_strategy_status) zapret_source_status; exit 0;;
   tg_proxy_enable) tg_proxy_apply; exit $?;;
@@ -2378,11 +2874,35 @@ case "$MODE" in
   tg_ws_disable) tgws_disable; exit 0;;
   tg_failover_status) tg_failover_status; exit 0;;
   tg_failover_run) tg_failover_apply; exit $?;;
+  telegram_controller_status) telegram_controller_status; exit 0;;
+  telegram_controller_probe) telegram_controller_probe; exit $?;;
+  telegram_controller_run) telegram_controller_run; exit $?;;
+  telegram_controller_enable) telegram_controller_enable; exit $?;;
+  telegram_controller_disable) telegram_controller_disable; exit $?;;
+  telegram_controller_config) telegram_controller_config "$TGCTL_ARG1" "$TGCTL_ARG2" "$TGCTL_ARG3" "$TGCTL_ARG4" "$TGCTL_ARG5"; exit $?;;
   predictive_auto) predictive_auto; exit $?;;
   device_discover) device_discover; exit $?;;
   device_benchmark) device_benchmark; exit $?;;
   device_status) device_status; exit $?;;
+  ai_catalog) ai_catalog; exit $?;;
+  ai_diagnose) ai_diagnose "$AI_SERVICE"; exit $?;;
+  ai_test) [ -n "$AI_SERVICE" ] || die "SERVICE required for --ai-test"; ai_probe_service "$AI_SERVICE"; exit $?;;
+  ai_auto) ai_auto "$AI_SERVICE"; exit $?;;
+  ai_apply) [ -n "$AI_SERVICE" ] || die "SERVICE required for --ai-apply"; ai_apply "$AI_SERVICE"; exit $?;;
+  ai_preset_status) ai_preset_status; exit $?;;
+  ai_preset_fetch) [ -n "$AI_PRESET_ID" ] || die "ID required for --ai-preset-fetch"; ai_preset_fetch "$AI_PRESET_ID"; exit $?;;
+  service_modules_status) service_modules_status; exit $?;;
+  service_module_enable) service_module_set "$SERVICE_MODULE_NAME" 1; exit $?;;
+  service_module_disable) service_module_set "$SERVICE_MODULE_NAME" 0; exit $?;;
+  service_module_recover) service_module_recover "$SERVICE_MODULE_NAME"; exit $?;;
+  resource_monitor) resource_monitor_status; resource_monitor_scan; exit $?;;
+  resource_recovery) resource_monitor_recovery; exit $?;;
   device_profile) device_set_profile "$DEVICE_IP" "$DEVICE_PROF"; exit $?;;
+  automation_status) automation_status; exit 0;;
+  automation_enable) automation_enable; exit $?;;
+  automation_disable) automation_disable; exit $?;;
+  automation_config) automation_config "$AUTOMATION_ENABLED" "$AUTOMATION_HOUR" "$AUTOMATION_MINUTE" "$AUTOMATION_INTERVAL"; exit $?;;
+  automation_run) automation_run; exit $?;;
   predictive_status) predictive_status; exit 0;;
   verify) verify; exit $?;;
   rpc_smoke) rpc_smoke; exit $?;;

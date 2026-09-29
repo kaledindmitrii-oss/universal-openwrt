@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+# Universal OpenWrt strategy automation helper.
+# Scheduling is OFF by default and is controlled explicitly from LuCI/CLI.
+START=99
+USE_PROCD=0
+
+start(){
+  :
+}
+
+stop(){
+  :
+}

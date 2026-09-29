@@ -1,0 +1,7 @@
+# id	engine	name	upstream	role	compatibility	local_action
+zapret2-universal-v9	zapret2	Universal V9	https://raw.githubusercontent.com/RixyPow/Zapret-UNIVERSAL-preset/main/Universal%20V9.txt	reserve	zapret2/NetZapret	fetch-and-validate
+zapret2-universal-v8	zapret2	Universal V8	https://raw.githubusercontent.com/RixyPow/Zapret-UNIVERSAL-preset/main/Universal%20V8.txt	reserve	zapret2/NetZapret	fetch-and-validate
+zapret2-universal-v2.1	zapret2	Universal V2.1	https://raw.githubusercontent.com/RixyPow/Zapret-UNIVERSAL-preset/main/Universal%20V2.1.txt	reserve	zapret2/NetZapret	fetch-and-validate
+zapret2-universal-v2.1-voice-alt	zapret2	Universal V2.1 voice ALT	https://raw.githubusercontent.com/RixyPow/Zapret-UNIVERSAL-preset/main/Universal%20V2.1%20voice%20ALT.txt	reserve	zapret2/NetZapret	fetch-and-validate
+zapret1-community-google	zapret1	Google-style nfqws community preset	https://github.com/remittor/zapret-openwrt/discussions/453	reference	zapret v1	manual-import-only
+zapret2-openwrt-flat	zapret2	Measured flat strategy	https://github.com/rikkichy/zapret2-openwrt	reference	zapret2/nfqws2	manual-import-only

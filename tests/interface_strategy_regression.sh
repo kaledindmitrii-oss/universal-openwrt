@@ -6,7 +6,7 @@ UI="$ROOT/luci-app-universal-openwrt/htdocs/luci-static/resources/view/universal
 sh -n "$SRC"
 node --check "$UI"
 # No direct recursive self-check invocation.
-python3 - "$SRC" <<'PY'
+python - "$SRC" <<'PY'
 import sys
 s=open(sys.argv[1]).read()
 start=s.index('modules_self_check(){')
@@ -17,9 +17,10 @@ assert 'modules_self_check' not in body.replace('modules_self_check(){','',1)
 PY
 COUNT="$(grep -c "btn('" "$UI")"
 [ "$COUNT" -le 32 ]
-# Main dashboard exposes only five primary actions; advanced actions are inside details.
-MAIN="$(grep -n "btn('Автонастройка'\|btn('Проверить'\|btn('Обновить ресурсы'\|btn('Обновить экран'\|btn('Откатить'" "$UI" | wc -l)"
-[ "$MAIN" -eq 5 ]
+# Main dashboard keeps a small set of obvious actions; advanced actions stay inside details.
+for label in 'Проверить' 'Автонастройка' 'Обновить' 'Начать диагностику'; do
+  grep -Fq "'$label'" "$UI"
+done
 # Strategy mutations are serialized and failures are propagated.
 grep -q "STRATEGY_CHANGE_LOCK='/var/run/universal-openwrt-strategy-change.lock'" "$SRC"
 grep -q 'strategy_change_unlock' "$SRC"

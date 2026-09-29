@@ -1,5 +1,5 @@
 #!/bin/sh
-# Universal OpenWrt bootstrap installer v30.2.16
+# Universal OpenWrt bootstrap installer v30.2.19
 # Works when executed from a checkout, a release archive, or directly via:
 #   wget -qO- https://raw.githubusercontent.com/kaledindmitrii-oss/universal-openwrt/main/installer/install.sh | sh
 set -eu
@@ -15,6 +15,8 @@ PACKAGE_ONLY=0
 PACKAGE_DIR=""
 RELEASE="${UOW_RELEASE:-}"
 USE_SOURCE=0
+GITHUB_MIRRORS="${UOWRT_GITHUB_MIRRORS:-}"
+GITHUB_STATUS=unknown
 
 log(){ printf '[Universal OpenWrt installer] %s\n' "$*"; }
 die(){ log "ERROR: $*"; rm -rf "$TMP" 2>/dev/null || true; exit 1; }
@@ -24,7 +26,7 @@ trap cleanup EXIT INT TERM
 
 usage(){
   cat <<USAGE
-Universal OpenWrt installer v30.2.16
+Universal OpenWrt installer v30.2.19
 
 Direct bootstrap:
   wget -qO- https://raw.githubusercontent.com/${REPO}/main/installer/install.sh | sh
@@ -41,26 +43,64 @@ Options:
   --source             install from source archive/checkout instead of release packages
   --package-dir DIR    install matching .ipk/.apk assets from DIR
   --package-only       install packages only
+  --github-mirrors LIST pipe-separated mirror prefixes for restricted networks
   -y                   unattended
   -h, --help           help
 USAGE
 }
 
+github_preflight(){
+  GITHUB_STATUS=offline
+  for u in https://api.github.com/ https://github.com/ https://raw.githubusercontent.com/; do
+    if fetch_probe "$u"; then GITHUB_STATUS=online; return 0; fi
+  done
+  if [ -n "$GITHUB_MIRRORS" ]; then
+    oldifs="$IFS"; IFS='|'
+    for m in $GITHUB_MIRRORS; do
+      [ -n "$m" ] || continue
+      case "$m" in */) u="${m}https://github.com/";; *) u="${m}/https://github.com/";; esac
+      if fetch_probe "$u"; then GITHUB_STATUS=mirror; IFS="$oldifs"; return 0; fi
+    done
+    IFS="$oldifs"
+  fi
+  return 1
+}
+fetch_probe(){
+  u="$1"
+  if have uclient-fetch; then uclient-fetch -q -T 5 -O /dev/null "$u" >/dev/null 2>&1; return $?; fi
+  if have wget; then wget -q -T 5 -O /dev/null "$u" >/dev/null 2>&1; return $?; fi
+  if have curl; then curl -fsSL --connect-timeout 4 --max-time 8 -o /dev/null "$u" >/dev/null 2>&1; return $?; fi
+  return 127
+}
+resolve_url(){
+  u="$1"
+  printf '%s\n' "$u"
+  case "$u" in
+    https://raw.githubusercontent.com/*)
+      rest="${u#https://raw.githubusercontent.com/}"; owner="${rest%%/*}"; rest="${rest#*/}"; repo="${rest%%/*}"; rest="${rest#*/}"
+      printf 'https://cdn.jsdelivr.net/gh/%s/%s@%s\n' "$owner" "$repo" "$rest";;
+  esac
+  if [ -n "$GITHUB_MIRRORS" ]; then
+    oldifs="$IFS"; IFS='|'
+    for m in $GITHUB_MIRRORS; do [ -n "$m" ] || continue; case "$m" in */) printf '%s%s\n' "$m" "$u";; *) printf '%s/%s\n' "$m" "$u";; esac; done
+    IFS="$oldifs"
+  fi
+}
 fetch(){
   out="$1"; url="$2"
-  log "Downloading: $url"
-  if have uclient-fetch; then
-    uclient-fetch -O "$out" "$url" || return 1
-  elif have wget; then
-    wget -O "$out" "$url" || return 1
-  elif have curl; then
-    curl -fL --retry 2 --connect-timeout 10 -o "$out" "$url" || return 1
-  else
-    return 1
-  fi
-  [ -s "$out" ]
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    log "Downloading: $candidate"
+    rm -f "$out" 2>/dev/null || true
+    if have uclient-fetch && uclient-fetch -q -T 20 -O "$out" "$candidate" >/dev/null 2>&1 && [ -s "$out" ]; then return 0; fi
+    if have wget && wget -q -T 20 -O "$out" "$candidate" >/dev/null 2>&1 && [ -s "$out" ]; then return 0; fi
+    if have curl && curl -fL --retry 1 --connect-timeout 10 --max-time 180 -o "$out" "$candidate" >/dev/null 2>&1 && [ -s "$out" ]; then return 0; fi
+  done <<EOF
+$(resolve_url "$url")
+EOF
+  rm -f "$out" 2>/dev/null || true
+  return 1
 }
-
 sha256_verify(){
   file="$1"; expected="$2"
   [ -n "$expected" ] || return 0
@@ -208,11 +248,12 @@ install_release_packages(){
     die "Release manifest does not contain a LuCI package for $pm"
   fi
   [ -x /usr/sbin/universal-openwrt ] && /usr/sbin/universal-openwrt --self-check || die "post-release self-check failed"
-  for f in strategy-engine.sh tunnel-engine.sh tg-ws-proxy.sh; do
+  for f in strategy-engine.sh tunnel-engine.sh tg-ws-proxy.sh tg-socks5-go.sh telegram-controller.sh telemt.sh automation.sh; do
     [ -f "/usr/lib/universal-openwrt/$f" ] || die "release package missing runtime module: $f"
   done
-  log "GitHub release $rel installed successfully."
+  log "Daily strategy automation remains disabled by default. Enable it from LuCI or with --automation-enable."
 }
+
 
 install_packages(){
   dir="$1"
@@ -234,7 +275,7 @@ install_packages(){
   [ -n "$luci" ] || die "LuCI package not found in $dir"
   install_luci_package "$luci"
   if [ -x /usr/sbin/universal-openwrt ]; then /usr/sbin/universal-openwrt --self-check || die "post-package self-check failed"; fi
-  log "Package installation completed."
+  log "Daily strategy automation remains disabled by default. Enable it from LuCI or with --automation-enable."
 }
 
 # Parse arguments before touching the network.
@@ -249,6 +290,7 @@ while [ $# -gt 0 ]; do
     --source) USE_SOURCE=1;;
     --package-dir) shift; PACKAGE_DIR="${1:-}";;
     --package-only) PACKAGE_ONLY=1;;
+    --github-mirrors) shift; GITHUB_MIRRORS="${1:-}";;
     -y) UNATTENDED=1;;
     -h|--help) usage; exit 0;;
     -*) die "unknown option: $1";;
@@ -260,6 +302,7 @@ done
 [ "$(id -u 2>/dev/null || echo 1)" = 0 ] || die "root required"
 
 check_target(){
+  github_preflight >/dev/null 2>&1 || log "GitHub unavailable; using configured mirrors/CDN fallbacks where possible"
   [ -r /etc/openwrt_release ] || die "This installer requires OpenWrt 24.10.2+ or 25.12.x"
   . /etc/openwrt_release
   rel="${DISTRIB_RELEASE:-}"
@@ -383,7 +426,7 @@ verify_luci
 for f in strategy-engine.sh tunnel-engine.sh tg-ws-proxy.sh ; do [ -f "/usr/lib/universal-openwrt/$f" ] || die "post-install module missing: $f"; done
 # Only install init scripts that actually exist in the release tree.
 for f in "$SRC"/packaging/root/etc/init.d/*; do [ -f "$f" ] || continue; sh -n "$f" || die "init script syntax check failed: $(basename "$f")"; done
-log "Installation completed successfully."
+log "Daily strategy automation remains disabled by default. Enable it from LuCI or with --automation-enable."
 log "Run: universal-openwrt --plan"
 log "Full setup: universal-openwrt --install -y"
 log "VPN monitor remains disabled by default."

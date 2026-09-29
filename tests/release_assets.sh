@@ -17,6 +17,8 @@ grep -q 'dist/release-manifest.json' "$ROOT/.github/workflows/release.yml"
 test -x "$ROOT/tools/build-release-manifest.py"
 grep -q 'tests/platform_scope.sh' "$ROOT/.github/workflows/release.yml"
 grep -q 'tests/release_assets.sh' "$ROOT/.github/workflows/release.yml"
+grep -q 'Universal-OpenWrt-Launcher.bat' "$ROOT/.github/workflows/release.yml"
+test -s "$ROOT/Universal-OpenWrt-Launcher.bat"
 # The Universal OpenWrt LuCI integration must pull in the full LuCI shell, not only luci-base.
 grep -q 'DEPENDS:=+luci +luci-base +rpcd +rpcd-mod-ucode +ucode' "$ROOT/luci-app-universal-openwrt/Makefile"
 grep -q '"universal-openwrt","luci","luci-base","rpcd","rpcd-mod-ucode","ucode"' "$ROOT/tools/build-assets.py"
@@ -28,7 +30,7 @@ grep -q 'LuCI shell: verified' "$ROOT/installer/install.sh"
 printf 'release_assets: OK\n'
 
 # The plain piped bootstrap must enter release-package mode before any source archive lookup.
-python3 - "$ROOT/installer/install.sh" <<'PY'
+python - "$ROOT/installer/install.sh" <<'PY'
 import sys
 p=sys.argv[1]
 s=open(p).read()
@@ -41,7 +43,7 @@ PY
 
 # Every materialized manifest asset must carry bytes and sha256.
 # Archive entries may be zero placeholders before release packaging; the workflow reruns this test after archives exist.
-python3 - "$ROOT/release-manifest.json" <<'PY'
+python - "$ROOT/release-manifest.json" <<'PY'
 import json,sys
 r=json.load(open(sys.argv[1]))
 for a in r['assets']:
@@ -49,7 +51,7 @@ for a in r['assets']:
     assert len(a.get('sha256','')) == 64, a
 PY
 # Release manifest package entries must point directly at GitHub Release Assets.
-python3 - "$ROOT/release-manifest.json" <<'PY'
+python - "$ROOT/release-manifest.json" <<'PY'
 import json,sys
 r=json.load(open(sys.argv[1]))
 base=f"https://github.com/{r['repository']}/releases/download/{r['tag']}/"
