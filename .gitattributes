@@ -1,4 +1,4 @@
-﻿# Keep source files stable across Windows/Linux environments.
+# Keep source files stable across Windows/Linux environments.
 
 * text=auto
 *.sh text eol=lf
